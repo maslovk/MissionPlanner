@@ -44,6 +44,7 @@ endfunction()
 
 # The C++ core. Tests and a later Qt application link this directly.
 add_library(mpcore_core STATIC
+    src/exchange.cpp
     src/frame_parser.cpp
     src/link.cpp
     src/param_download.cpp

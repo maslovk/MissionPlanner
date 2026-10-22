@@ -271,6 +271,38 @@ MPCORE_API int MPCORE_CALL mp_param_download_tick(mp_param_download *download, i
 MPCORE_API int MPCORE_CALL mp_param_download_status_get(mp_param_download *download,
                                                         mp_param_download_status *out);
 
+/*
+ * One request and its reply, sent again when the reply is late (700 ms, 3 resends, then a
+ * timeout, as Mission Planner's request loops). Feed it frames, send what it asks for, call tick.
+ * One per request; not thread-safe; send runs inside the calls.
+ */
+typedef struct mp_exchange mp_exchange;
+
+/* mp_exchange_tick() results */
+#define MP_EXCHANGE_WAITING   0
+#define MP_EXCHANGE_DONE      1
+#define MP_EXCHANGE_TIMED_OUT 2
+
+/* PARAM_SET, answered by the vehicle's PARAM_VALUE with the same name. value as sent on the wire. */
+MPCORE_API mp_exchange *MPCORE_CALL mp_param_set_create(uint32_t sysid, uint8_t compid, const char *name,
+                                                         float value, uint8_t type, mp_message_fn send,
+                                                         void *user);
+/* PARAM_REQUEST_READ by name (index -1) or by index, answered by that PARAM_VALUE. */
+MPCORE_API mp_exchange *MPCORE_CALL mp_param_read_create(uint32_t sysid, uint8_t compid, const char *name,
+                                                          int16_t index, mp_message_fn send, void *user);
+MPCORE_API void MPCORE_CALL mp_exchange_destroy(mp_exchange *exchange);
+/* Sends the request. */
+MPCORE_API int MPCORE_CALL mp_exchange_start(mp_exchange *exchange, int64_t now_us);
+/* Any received frame; the reply from the target is recognised, the rest ignored. */
+MPCORE_API int MPCORE_CALL mp_exchange_frame(mp_exchange *exchange, const uint8_t *frame, size_t len,
+                                             int64_t now_us);
+/* Resends when due. Returns MP_EXCHANGE_* (or a negative MP_ERR_*). */
+MPCORE_API int MPCORE_CALL mp_exchange_tick(mp_exchange *exchange, int64_t now_us);
+/* Copies the reply frame once done; returns its length, 0 before, or a negative MP_ERR_*. */
+MPCORE_API int MPCORE_CALL mp_exchange_reply(mp_exchange *exchange, uint8_t *out, size_t capacity);
+/* How many times the request was sent. */
+MPCORE_API uint32_t MPCORE_CALL mp_exchange_sends(mp_exchange *exchange);
+
 #ifdef __cplusplus
 }
 #endif

@@ -3,6 +3,7 @@ add_executable(mpcore_tests
     test_protocol.cpp
     test_parser.cpp
     test_seq.cpp
+    test_exchange.cpp
     test_link.cpp
     test_params.cpp
 )

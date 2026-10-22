@@ -206,6 +206,36 @@ namespace MissionPlanner.Mavlink.Native
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern int mp_param_download_status_get(IntPtr download, ref mp_param_download_status status);
 
+        public const int MP_EXCHANGE_WAITING = 0;
+        public const int MP_EXCHANGE_DONE = 1;
+        public const int MP_EXCHANGE_TIMED_OUT = 2;
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        public static extern IntPtr mp_param_set_create(uint sysid, byte compid, string name, float value, byte type,
+            mp_message_fn send, IntPtr user);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        public static extern IntPtr mp_param_read_create(uint sysid, byte compid, string name, short index,
+            mp_message_fn send, IntPtr user);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mp_exchange_destroy(IntPtr exchange);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_exchange_start(IntPtr exchange, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_exchange_frame(IntPtr exchange, byte[] frame, UIntPtr len, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_exchange_tick(IntPtr exchange, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_exchange_reply(IntPtr exchange, byte[] output, UIntPtr capacity);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern uint mp_exchange_sends(IntPtr exchange);
+
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern uint mp_abi_version();
 
@@ -428,6 +458,116 @@ namespace MissionPlanner.Mavlink.Native
 
             GC.KeepAlive(_onSend);
             GC.KeepAlive(_onParam);
+        }
+    }
+
+    /// <summary>
+    /// One request and its reply, resent when the reply is late (see mp_exchange in mpcore.h).
+    /// Thread-safe like MpParamDownload.
+    /// </summary>
+    public sealed class MpExchange : IDisposable
+    {
+        public enum Result
+        {
+            Waiting = MpCoreNative.MP_EXCHANGE_WAITING,
+            Done = MpCoreNative.MP_EXCHANGE_DONE,
+            TimedOut = MpCoreNative.MP_EXCHANGE_TIMED_OUT,
+        }
+
+        readonly object _sync = new object();
+        readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        readonly MpCoreNative.mp_message_fn _onSend;
+        readonly Action<uint, byte[]> _send;
+        IntPtr _exchange;
+
+        MpExchange(Action<uint, byte[]> send, Func<MpCoreNative.mp_message_fn, IntPtr> create)
+        {
+            _send = send;
+            _onSend = OnSend;
+            _exchange = create(_onSend);
+            if (_exchange == IntPtr.Zero)
+                throw new ArgumentException("the request could not be created");
+        }
+
+        /// <summary>PARAM_SET; done when the PARAM_VALUE with the same name comes back.</summary>
+        public static MpExchange ParamSet(uint sysId, byte compId, string name, float value, byte type,
+            Action<uint, byte[]> send)
+        {
+            return new MpExchange(send, fn => MpCoreNative.mp_param_set_create(sysId, compId, name, value, type, fn, IntPtr.Zero));
+        }
+
+        /// <summary>PARAM_REQUEST_READ by name (index -1) or by index.</summary>
+        public static MpExchange ParamRead(uint sysId, byte compId, string name, short index, Action<uint, byte[]> send)
+        {
+            return new MpExchange(send, fn => MpCoreNative.mp_param_read_create(sysId, compId, name, index, fn, IntPtr.Zero));
+        }
+
+        long NowUs => _clock.Elapsed.Ticks / (TimeSpan.TicksPerMillisecond / 1000);
+
+        public void Start()
+        {
+            lock (_sync)
+                if (_exchange != IntPtr.Zero)
+                    MpCoreNative.mp_exchange_start(_exchange, NowUs);
+        }
+
+        public void Frame(byte[] frame)
+        {
+            if (frame == null || frame.Length == 0)
+                return;
+            lock (_sync)
+                if (_exchange != IntPtr.Zero)
+                    MpCoreNative.mp_exchange_frame(_exchange, frame, (UIntPtr)frame.Length, NowUs);
+        }
+
+        public Result Tick()
+        {
+            lock (_sync)
+                return _exchange == IntPtr.Zero ? Result.TimedOut : (Result)MpCoreNative.mp_exchange_tick(_exchange, NowUs);
+        }
+
+        /// <summary>The reply frame, or null before it came.</summary>
+        public byte[] Reply
+        {
+            get
+            {
+                var buffer = new byte[MpCoreNative.MPCORE_MAX_FRAME_LEN];
+                int n;
+                lock (_sync)
+                    n = _exchange == IntPtr.Zero ? 0 : MpCoreNative.mp_exchange_reply(_exchange, buffer, (UIntPtr)buffer.Length);
+                if (n <= 0)
+                    return null;
+                Array.Resize(ref buffer, n);
+                return buffer;
+            }
+        }
+
+        public uint Sends
+        {
+            get
+            {
+                lock (_sync)
+                    return _exchange == IntPtr.Zero ? 0 : MpCoreNative.mp_exchange_sends(_exchange);
+            }
+        }
+
+        void OnSend(IntPtr user, uint msgid, IntPtr payload, UIntPtr len)
+        {
+            var bytes = new byte[(int)len];
+            Marshal.Copy(payload, bytes, 0, bytes.Length);
+            try { _send?.Invoke(msgid, bytes); } catch (Exception ex) { Console.Error.WriteLine("mpcore exchange Send: " + ex); }
+        }
+
+        public void Dispose()
+        {
+            lock (_sync)
+            {
+                if (_exchange != IntPtr.Zero)
+                    MpCoreNative.mp_exchange_destroy(_exchange);
+                _exchange = IntPtr.Zero;
+            }
+
+            GC.KeepAlive(_onSend);
         }
     }
 

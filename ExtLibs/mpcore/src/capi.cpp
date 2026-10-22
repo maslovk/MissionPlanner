@@ -4,6 +4,7 @@
 #include <cstring>
 #include <new>
 
+#include "exchange.hpp"
 #include "link.hpp"
 #include "mpcore/mpcore.h"
 #include "param_download.hpp"
@@ -13,6 +14,15 @@ struct mp_link {
     explicit mp_link(const mpcore::LinkConfig &config) : link(config) {}
     mpcore::Link link;
     mp_link_callbacks callbacks{};
+};
+
+struct mp_exchange {
+    mp_exchange(mpcore::Exchange::Request request, mp_message_fn send, void *user)
+        : exchange(std::move(request), [send, user](uint32_t msgid, const uint8_t *payload, std::size_t len) {
+              if (send)
+                  send(user, msgid, payload, len);
+          }) {}
+    mpcore::Exchange exchange;
 };
 
 struct mp_param_download {
@@ -348,6 +358,90 @@ MPCORE_API int MPCORE_CALL mp_param_download_status_get(mp_param_download *downl
     s.done = d.done() ? 1 : 0;
     s.one_by_one = d.one_by_one() ? 1 : 0;
     return copy_out(s, out);
+}
+
+MPCORE_API mp_exchange *MPCORE_CALL mp_param_set_create(uint32_t sysid, uint8_t compid, const char *name,
+                                                         float value, uint8_t type, mp_message_fn send,
+                                                         void *user) {
+    if (name == nullptr)
+        return nullptr;
+    try {
+        return new mp_exchange(mpcore::Exchange::param_set(sysid, compid, name, value, type), send, user);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+MPCORE_API mp_exchange *MPCORE_CALL mp_param_read_create(uint32_t sysid, uint8_t compid, const char *name,
+                                                          int16_t index, mp_message_fn send, void *user) {
+    if (index == -1 && (name == nullptr || name[0] == 0))
+        return nullptr;
+    try {
+        return new mp_exchange(mpcore::Exchange::param_read(sysid, compid, name != nullptr ? name : "", index), send,
+                               user);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+MPCORE_API void MPCORE_CALL mp_exchange_destroy(mp_exchange *exchange) {
+    delete exchange;
+}
+
+MPCORE_API int MPCORE_CALL mp_exchange_start(mp_exchange *exchange, int64_t now_us) {
+    if (exchange == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        exchange->exchange.start(now_us);
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+    return MP_OK;
+}
+
+MPCORE_API int MPCORE_CALL mp_exchange_frame(mp_exchange *exchange, const uint8_t *frame, size_t len,
+                                             int64_t now_us) {
+    if (exchange == nullptr || frame == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        exchange->exchange.on_frame(frame, len, now_us);
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+    return MP_OK;
+}
+
+MPCORE_API int MPCORE_CALL mp_exchange_tick(mp_exchange *exchange, int64_t now_us) {
+    if (exchange == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        switch (exchange->exchange.tick(now_us)) {
+        case mpcore::Exchange::State::Done:
+            return MP_EXCHANGE_DONE;
+        case mpcore::Exchange::State::TimedOut:
+            return MP_EXCHANGE_TIMED_OUT;
+        default:
+            return MP_EXCHANGE_WAITING;
+        }
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+}
+
+MPCORE_API int MPCORE_CALL mp_exchange_reply(mp_exchange *exchange, uint8_t *out, size_t capacity) {
+    if (exchange == nullptr)
+        return MP_ERR_ARGUMENT;
+    const std::vector<uint8_t> &reply = exchange->exchange.reply();
+    if (reply.empty())
+        return 0;
+    if (out == nullptr || capacity < reply.size())
+        return MP_ERR_ARGUMENT;
+    std::memcpy(out, reply.data(), reply.size());
+    return static_cast<int>(reply.size());
+}
+
+MPCORE_API uint32_t MPCORE_CALL mp_exchange_sends(mp_exchange *exchange) {
+    return exchange == nullptr ? 0 : exchange->exchange.sends();
 }
 
 }  // extern "C"

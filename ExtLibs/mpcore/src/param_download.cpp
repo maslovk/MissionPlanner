@@ -17,7 +17,8 @@ void ParamDownload::request_list() {
     req.target_component = compid_;
     full_list_requests_++;
     if (send_)
-        send_(MAVLINK_MSG_ID_PARAM_REQUEST_LIST, reinterpret_cast<const uint8_t *>(&req), sizeof(req));
+        send_(MAVLINK_MSG_ID_PARAM_REQUEST_LIST, reinterpret_cast<const uint8_t *>(&req),
+              MAVLINK_MSG_ID_PARAM_REQUEST_LIST_LEN);
 }
 
 void ParamDownload::request_index(uint16_t index) {
@@ -27,7 +28,8 @@ void ParamDownload::request_index(uint16_t index) {
     req.target_component = compid_;
     single_requests_++;
     if (send_)
-        send_(MAVLINK_MSG_ID_PARAM_REQUEST_READ, reinterpret_cast<const uint8_t *>(&req), sizeof(req));
+        send_(MAVLINK_MSG_ID_PARAM_REQUEST_READ, reinterpret_cast<const uint8_t *>(&req),
+              MAVLINK_MSG_ID_PARAM_REQUEST_READ_LEN);
 }
 
 void ParamDownload::start(int64_t now_us) {

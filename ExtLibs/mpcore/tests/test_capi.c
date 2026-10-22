@@ -305,12 +305,51 @@ static void test_param_download(void) {
     CHECK(mp_param_download_tick(NULL, 0) == MP_ERR_ARGUMENT);
 }
 
+static void test_exchange(void) {
+    param_capture c;
+    uint8_t frame[MPCORE_MAX_FRAME_LEN];
+    uint8_t reply[MPCORE_MAX_FRAME_LEN];
+    mp_exchange *e;
+    int n;
+
+    memset(&c, 0, sizeof(c));
+    e = mp_param_set_create(1, 1, "RTL_ALT", 1500.0f, 9, param_send, &c);
+    CHECK(e != NULL);
+    CHECK(mp_exchange_reply(e, reply, sizeof(reply)) == 0);
+    CHECK(mp_exchange_start(e, 0) == MP_OK && c.sent_count == 1 && c.sent[0] == 23);
+    n = param_frame(frame, 3, 300, "RTL_SPEED", 0.0f);
+    mp_exchange_frame(e, frame, (size_t)n, 1000);
+    CHECK(mp_exchange_tick(e, 2000) == MP_EXCHANGE_WAITING);
+    CHECK(mp_exchange_tick(e, 700000) == MP_EXCHANGE_WAITING && mp_exchange_sends(e) == 2);
+    n = param_frame(frame, 4, 300, "RTL_ALT", 1500.0f);
+    mp_exchange_frame(e, frame, (size_t)n, 800000);
+    CHECK(mp_exchange_tick(e, 800000) == MP_EXCHANGE_DONE);
+    CHECK(mp_exchange_reply(e, reply, sizeof(reply)) == n && memcmp(reply, frame, (size_t)n) == 0);
+    CHECK(mp_exchange_reply(e, reply, 3) == MP_ERR_ARGUMENT);
+    mp_exchange_destroy(e);
+
+    e = mp_param_read_create(1, 1, NULL, 7, param_send, &c);
+    CHECK(e != NULL && mp_exchange_start(e, 0) == MP_OK && c.sent[2] == 20);
+    CHECK(mp_exchange_tick(e, 2800000 - 1) == MP_EXCHANGE_WAITING); /* resends happen on later ticks */
+    mp_exchange_tick(e, 2800000);
+    mp_exchange_tick(e, 3500000);
+    mp_exchange_tick(e, 4200000);
+    CHECK(mp_exchange_tick(e, 4900000) == MP_EXCHANGE_TIMED_OUT && mp_exchange_sends(e) == 4);
+    mp_exchange_destroy(e);
+
+    CHECK(mp_param_read_create(1, 1, "", -1, param_send, &c) == NULL);
+    CHECK(mp_param_set_create(1, 1, NULL, 0, 9, param_send, &c) == NULL);
+    CHECK(mp_exchange_tick(NULL, 0) == MP_ERR_ARGUMENT);
+    mp_exchange_destroy(NULL);
+}
+
 int main(void) {
     test_version_and_messages();
     test_round_trip();
     test_errors();
     test_frame_encode();
     test_param_download();
+    test_exchange();
     printf("%s (%d failed checks)\n", failures == 0 ? "ok" : "FAIL", failures);
     return failures == 0 ? 0 : 1;
 }

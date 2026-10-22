@@ -223,11 +223,37 @@ static class MpCoreSmoke
         }
     }
 
+    static void Exchange()
+    {
+        var sent = new List<uint>();
+        using (var set = MpExchange.ParamSet(1, 1, "ARMING_CHECK", 0, 9, (msgid, payload) => sent.Add(msgid)))
+        {
+            set.Start();
+            Check(sent.Count == 1 && sent[0] == 23, "PARAM_SET sent");
+            set.Frame(ParamValue(5, 300, "ARMING_RUDDER", 2));
+            Check(set.Tick() == MpExchange.Result.Waiting && set.Reply == null, "another parameter is not the answer");
+            var answer = ParamValue(4, 300, "ARMING_CHECK", 0);
+            set.Frame(answer);
+            Check(set.Tick() == MpExchange.Result.Done && set.Sends == 1, "done");
+            var reply = set.Reply;
+            Check(reply != null && reply.Length == answer.Length && reply[reply.Length - 1] == answer[answer.Length - 1], "reply frame");
+        }
+
+        using (var read = MpExchange.ParamRead(1, 1, "RTL_ALT", -1, (msgid, payload) => sent.Add(msgid)))
+        {
+            read.Start();
+            Check(sent[1] == 20, "PARAM_REQUEST_READ sent");
+            read.Frame(ParamValue(9, 300, "RTL_ALT", 1500));
+            Check(read.Tick() == MpExchange.Result.Done, "read by name");
+        }
+    }
+
     static int Main()
     {
         Layouts();
         Encoder();
         Params();
+        Exchange();
         RoundTrip();
         Signing();
         Console.WriteLine((failures == 0 ? "ok" : "FAIL") + " (" + failures + " failed checks, " + IntPtr.Size * 8 + "-bit)");
