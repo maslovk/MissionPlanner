@@ -62,18 +62,23 @@ jobs:
         run: |
           cmake --version
           $csc = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "MSBuild\Current\Bin\Roslyn\csc.exe" | Select-Object -First 1
+          # without it the C# tests (the 32-bit struct layouts) would be skipped silently
+          if (-not $csc) { Write-Host "::error title=csc.exe not found::vswhere found no Roslyn csc.exe"; exit 1 }
           . .github/scripts/run-annotated.ps1
-          Invoke-Annotated { cmake --preset ${{ matrix.preset }} -S ExtLibs/mpcore "-DMPCORE_CSHARP_COMPILER=$csc" }
+          Invoke-Annotated { cmake --preset ${{ matrix.preset }} -S ExtLibs/mpcore "-DMPCORE_CSHARP_COMPILER=$csc" } | Out-Null
       - name: Build
         shell: pwsh
         run: |
           . .github/scripts/run-annotated.ps1
-          Invoke-Annotated { cmake --build ExtLibs/mpcore/build/${{ matrix.preset }} --config Release }
+          Invoke-Annotated { cmake --build ExtLibs/mpcore/build/${{ matrix.preset }} --config Release } | Out-Null
       - name: Test
         shell: pwsh
         run: |
           . .github/scripts/run-annotated.ps1
-          Invoke-Annotated { ctest --test-dir ExtLibs/mpcore/build/${{ matrix.preset }} -C Release --output-on-failure }
+          $out = Invoke-Annotated { ctest --test-dir ExtLibs/mpcore/build/${{ matrix.preset }} -C Release --output-on-failure }
+          # which tests ran, readable without a login
+          $summary = ($out | Select-String -Pattern 'Test +#|tests passed' | ForEach-Object { $_.Line.Trim() }) -join "`n"
+          Write-Host "::notice title=ctest ${{ matrix.preset }}::$(ConvertTo-AnnotationText $summary)"
       - uses: actions/upload-artifact@v4
         with:
           name: mpcore-${{ matrix.preset }}

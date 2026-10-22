@@ -3,6 +3,7 @@
 # signing in to GitHub (GET /repos/{owner}/{repo}/check-runs/{job_id}/annotations).
 #   . .github/scripts/run-annotated.ps1
 #   Invoke-Annotated { cmake --preset windows-x64 -S ExtLibs/mpcore "-DSOME_PATH=$path" }
+# It returns the command's output lines (they are also printed).
 # The command is a script block, not a list of arguments, so PowerShell passes its arguments to
 # the program as written (as a parameter list it would split "-DX=C:\..." at the colon).
 
@@ -14,8 +15,12 @@ function Invoke-Annotated([scriptblock]$Command) {
     $output | ForEach-Object { Write-Host $_ }
     if ($code -ne 0) {
         $tail = ($output | Select-Object -Last 40) -join "`n"
-        $tail = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-        Write-Host "::error title=Command exited with $code::$tail"
+        Write-Host "::error title=Command exited with $code::$(ConvertTo-AnnotationText $tail)"
         exit $code
     }
+    return $output
+}
+
+function ConvertTo-AnnotationText([string]$Text) {
+    return $Text.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
 }
