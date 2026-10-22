@@ -1,6 +1,6 @@
-# Defines Invoke-Annotated, which runs a command block and, if the command fails, repeats the end
-# of its output as a workflow error annotation. Unlike the job log, annotations can be read without
-# signing in to GitHub (GET /repos/{owner}/{repo}/check-runs/{job_id}/annotations).
+# Defines Invoke-Annotated, which runs a command block and, if the command fails, repeats the
+# relevant part of its output as a workflow error annotation. Unlike the job log, annotations can
+# be read without signing in to GitHub (GET /repos/{owner}/{repo}/check-runs/{job_id}/annotations).
 #   . .github/scripts/run-annotated.ps1
 #   Invoke-Annotated { cmake --preset windows-x64 -S ExtLibs/mpcore "-DSOME_PATH=$path" }
 # It returns the command's output lines (they are also printed).
@@ -10,17 +10,35 @@
 function Invoke-Annotated([scriptblock]$Command) {
     # a native command writing to stderr must not stop the step before its output is reported
     $ErrorActionPreference = 'Continue'
-    $output = & $Command 2>&1 | ForEach-Object { "$_" }
+    $output = @(& $Command 2>&1 | ForEach-Object { "$_" })
     $code = $LASTEXITCODE
     $output | ForEach-Object { Write-Host $_ }
     if ($code -ne 0) {
-        $tail = ($output | Select-Object -Last 40) -join "`n"
-        Write-Host "::error title=Command exited with $code::$(ConvertTo-AnnotationText $tail)"
+        Write-Host "::error title=Command exited with $code::$(ConvertTo-AnnotationText (Get-FailureLines $output))"
         exit $code
     }
     return $output
 }
 
+# The lines that explain a failure: errors, failed tests and their messages and stack frames (with
+# the two lines after each), not warnings; then the last lines. Builds print many warnings last, so
+# the tail alone would not show the failure.
+function Get-FailureLines([string[]]$Lines) {
+    $keep = New-Object System.Collections.Generic.List[string]
+    $pattern = '(?i)\berror\b|\bfailed\b|exception|assert|expected|actual|^\s*at '
+    for ($i = 0; $i -lt $Lines.Count -and $keep.Count -lt 80; $i++) {
+        if ($Lines[$i] -match $pattern -and $Lines[$i] -notmatch '(?i)\bwarning\b') {
+            for ($j = $i; $j -lt [Math]::Min($i + 3, $Lines.Count); $j++) { $keep.Add($Lines[$j]) }
+            $i += 2
+        }
+    }
+    $keep.Add('...')
+    $Lines | Select-Object -Last 8 | ForEach-Object { $keep.Add($_) }
+    return ($keep -join "`n")
+}
+
 function ConvertTo-AnnotationText([string]$Text) {
+    # annotations are cut at 64 KB; keep well under
+    if ($Text.Length -gt 30000) { $Text = $Text.Substring(0, 30000) }
     return $Text.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
 }
