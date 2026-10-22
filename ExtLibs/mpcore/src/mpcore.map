@@ -1,0 +1,9 @@
+/* ELF export list: only the C ABI. Without it the standard library's template instantiations
+   (std::deque, std::string, ...) are exported too and can clash with other copies in the
+   host process. */
+{
+    global:
+        mp_*;
+    local:
+        *;
+};

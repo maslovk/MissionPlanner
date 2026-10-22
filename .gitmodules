@@ -2,3 +2,7 @@
 	path = ExtLibs/mono
 	url = https://github.com/meee1/mono.git
 	shallow = true
+[submodule "ExtLibs/mpcore/third_party/pymavlink"]
+	path = ExtLibs/mpcore/third_party/pymavlink
+	url = https://github.com/ArduPilot/pymavlink.git
+	shallow = true

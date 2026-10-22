@@ -1,0 +1,65 @@
+name: mpcore
+
+on:
+  push:
+    paths:
+      - 'ExtLibs/mpcore/**'
+      - 'ExtLibs/Mavlink/message_definitions/**'
+      - '.github/workflows/mpcore.yml'
+  pull_request:
+    paths:
+      - 'ExtLibs/mpcore/**'
+      - 'ExtLibs/Mavlink/message_definitions/**'
+      - '.github/workflows/mpcore.yml'
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.preset }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [linux-release, linux-asan]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      # only the generator; the Mono submodule is large and not needed
+      - name: Check out pymavlink
+        run: git submodule update --init --depth 1 ExtLibs/mpcore/third_party/pymavlink
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build mono-mcs mono-runtime
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -S ExtLibs/mpcore -DMPCORE_CSHARP_COMPILER=$(command -v mcs)
+      - name: Build
+        run: cmake --build ExtLibs/mpcore/build/${{ matrix.preset }}
+      - name: Test
+        run: ctest --test-dir ExtLibs/mpcore/build/${{ matrix.preset }} --output-on-failure
+
+  windows:
+    name: Windows ${{ matrix.preset }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [windows-x64, windows-x86]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Check out pymavlink
+        run: git submodule update --init --depth 1 ExtLibs/mpcore/third_party/pymavlink
+      - name: Configure
+        shell: pwsh
+        run: |
+          $csc = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "MSBuild\Current\Bin\Roslyn\csc.exe" | Select-Object -First 1
+          cmake --preset ${{ matrix.preset }} -S ExtLibs/mpcore "-DMPCORE_CSHARP_COMPILER=$csc"
+      - name: Build
+        run: cmake --build ExtLibs/mpcore/build/${{ matrix.preset }} --config Release
+      - name: Test
+        run: ctest --test-dir ExtLibs/mpcore/build/${{ matrix.preset }} -C Release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mpcore-${{ matrix.preset }}
+          path: ExtLibs/mpcore/build/${{ matrix.preset }}/bin/Release/mpcore.dll
