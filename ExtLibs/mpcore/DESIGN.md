@@ -92,7 +92,7 @@ running meanwhile.
 * Signed frames are not checked for replay (the timestamp is computed and ignored). mpcore keeps
   this for now for compatibility; it should become an option once signing is driven by the core.
 
-## Phase 1: running inside Mission Planner (next)
+## Phase 1: running inside Mission Planner
 
 1. **Ship the libraries (done).** `main.yml` builds `mpcore.dll` for x64 and x86 into
    `bin/Release/net461/<arch>/`, the layout `Utilities/NativeLibrary.cs` uses for SkiaSharp;
@@ -101,12 +101,12 @@ running meanwhile.
    `bindings/csharp/MpCore.cs` is linked into `MissionPlanner.ArduPilot.csproj`; it needs no
    unsafe code. Without the native library the shadow logs "not available" and does nothing.
 2. **Shadow mode (done, needs field time).** See below.
-3. **Switch the receive path (done, opt-in, setting `mpcore_receive`).** See "Native receive"
-   below. The per-vehicle statistics stay in C# for now (the core computes the same, as shadow mode
-   checks); moving `MAVState`'s counters to `mp_peer_stats` comes with step 4, when the core also
-   owns the signing state.
-4. **Switch the send path.** `generatePacket` calls `mp_link_send`; the write callback writes to
-   `BaseStream` under `writelock` and to the tlog.
+3. **Switch the receive path (done, opt-in, setting `mpcore_receive`).** See "Native receive".
+4. **Switch the send path (done, opt-in, setting `mpcore_send`).** See "Native send". The
+   per-vehicle state (MAVLink 1/2, signing keys and timestamps, loss counters) stays in `MAVState`
+   for now: the core computes the same (shadow mode and the receive tests check it), and it moves
+   into the core with the protocols in phase 2, when C# stops needing it, rather than being kept
+   in two places meanwhile.
 5. **Then phase 2:** parameter, mission (all three types) and MAVFTP transfers move into the core
    as state machines with progress and cancellation, replacing the `giveComport` read loops; then
    `CurrentState`.
@@ -180,6 +180,26 @@ same streams (several vehicles, MAVLink 1 and 2, a 32-bit ID, a command to anoth
 text) and requires the same frames, loss counters and text, and that frames after a corrupted
 length byte are recovered; CI runs it with the native library (`MPCORE_REQUIRED=1`).
 
+## Native send
+
+With `<mpcore_send>True</mpcore_send>` (independent of `mpcore_receive`),
+`MAVLinkInterface.generatePacket` has the core encode each frame through `mp_frame_encode`, which
+keeps no state: the caller passes every decision. `generatePacket` still makes them all as before
+(MAVLink 1 when the vehicle has not sent MAVLink 2, signing with `MAVState`'s key, link ID and
+timestamp, the sequence number, a TARGET32 header for a 32-bit destination), writes the frame under
+`writelock`, logs it to the tlog and raises `OnPacketSent`; only the bytes come from the core. A
+message the core's dialect lacks (`zVIDEO_STREAM_INFORMATION` from `offspec.xml`) is encoded by the
+C# code as before, and so is everything if the native library is missing.
+
+Tests: `bindings/csharp/MpCoreEncoderParity.cs` encodes every message of the C# dialect (353, 6,066
+frames: MAVLink 1 and 2, zero-trimmed, signed, 8 and 32-bit source and destination) with the C#
+encoder and the core and requires the same bytes, and the same CRC extras and lengths in both
+dialect tables. (Its reference MAVLink 1 frame is cut to the base length as `generatePacket` does:
+`MavlinkParse.GenerateMAVLinkPacket10` itself sends the MAVLink 2 extension fields in MAVLink 1
+frames.) `MissionPlannerTests/Mavlink/MpCoreSendTests.cs` sends every message through
+`generatePacket` to four vehicles both ways and requires the same frames (signed ones up to their
+timestamp, and the core's signatures verified).
+
 ## Tests
 
 * `tests/wire.hpp` builds frames byte by byte with its own CRC, ported from
@@ -197,4 +217,6 @@ length byte are recovered; CI runs it with the native library (`MPCORE_REQUIRED=
   a recorded flight (above).
 * `bindings/csharp/MpCoreReceiverTest.cs` and `MissionPlannerTests/Mavlink/MpCoreReceiveTests.cs`:
   native receive (above).
+* `bindings/csharp/MpCoreEncoderParity.cs` and `MissionPlannerTests/Mavlink/MpCoreSendTests.cs`:
+  native send (above).
 * Everything also runs under AddressSanitizer and UBSan (`linux-asan`).

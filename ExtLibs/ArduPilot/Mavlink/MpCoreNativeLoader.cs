@@ -33,5 +33,26 @@ namespace MissionPlanner.ArduPilot.Mavlink
                     LoadLibraryW(path);
             }
         }
+
+        /// <summary>
+        /// Loads the library and checks its ABI. Logs (as "mpcore {user}: ...") whether it can be used.
+        /// </summary>
+        public static bool Available(string user, Action<string> log)
+        {
+            try
+            {
+                Load();
+                if (MissionPlanner.Mavlink.Native.MpCoreNative.mp_abi_version() != MissionPlanner.Mavlink.Native.MpCoreNative.AbiVersion)
+                    throw new InvalidOperationException("ABI version mismatch");
+                log?.Invoke("mpcore " + user + ": started, " +
+                            Marshal.PtrToStringAnsi(MissionPlanner.Mavlink.Native.MpCoreNative.mp_version_string()));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                log?.Invoke("mpcore " + user + ": not available, using the C# code: " + ex.Message);
+                return false;
+            }
+        }
     }
 }

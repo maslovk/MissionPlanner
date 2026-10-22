@@ -33,7 +33,7 @@ namespace MissionPlannerTests.Mavlink
         {
             Settings.Instance["mpcore_receive"] = native.ToString();
             var result = new Result { Port = new MAVLinkInterface { printbps = false } };
-            var serial = new ChunkSerial();
+            var serial = new MpCoreTestSerial();
             result.Port.BaseStream = serial;
             serial.Feed(stream);
             while (serial.BytesToRead > 0 || result.Port.HasBufferedFrames)
@@ -157,45 +157,6 @@ namespace MissionPlannerTests.Mavlink
             {
                 Settings.Instance["mpcore_receive"] = oldSetting ?? "False";
             }
-        }
-
-        // A port whose bytes are all there at once and are read as much as asked, unlike
-        // Sysid32Tests' one byte at a time, so the core reads in chunks as on a real port.
-        sealed class ChunkSerial : ICommsSerial
-        {
-            readonly Queue<byte> incoming = new Queue<byte>();
-            public void Feed(byte[] bytes) { foreach (byte b in bytes) incoming.Enqueue(b); }
-            public Stream BaseStream => null;
-            public int BaudRate { get; set; }
-            public int BytesToRead => incoming.Count;
-            public int BytesToWrite => 0;
-            public int DataBits { get; set; }
-            public bool DtrEnable { get; set; }
-            public bool IsOpen { get; private set; } = true;
-            public string PortName { get; set; } = "test";
-            public int ReadBufferSize { get; set; }
-            public int ReadTimeout { get; set; } = 100;
-            public bool RtsEnable { get; set; }
-            public int WriteBufferSize { get; set; }
-            public int WriteTimeout { get; set; }
-            public void Close() { IsOpen = false; }
-            public void Open() { IsOpen = true; }
-            public void DiscardInBuffer() { incoming.Clear(); }
-            public int Read(byte[] buffer, int offset, int count)
-            {
-                int n = Math.Min(count, incoming.Count);
-                for (int i = 0; i < n; i++) buffer[offset + i] = incoming.Dequeue();
-                return n;
-            }
-            public int ReadByte() { return incoming.Dequeue(); }
-            public int ReadChar() { return ReadByte(); }
-            public string ReadExisting() { return ""; }
-            public string ReadLine() { return ""; }
-            public void Write(string text) { }
-            public void Write(byte[] buffer, int offset, int count) { }
-            public void WriteLine(string text) { }
-            public void toggleDTR() { }
-            public void Dispose() { Close(); }
         }
     }
 }

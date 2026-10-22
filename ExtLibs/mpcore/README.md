@@ -27,9 +27,9 @@ To also test the C# binding and the shadow comparer, pass a C# compiler:
 an `mcs.exe` is run with `mono`), or Roslyn's `csc.exe` on Windows. If the compiler cannot find
 `System.Runtime.Serialization.dll` by name, give its path in `MPCORE_CSHARP_SERIALIZATION_REF`.
 
-Inside Mission Planner the core runs behind two settings, both off by default: `mpcore_shadow`
-(beside the C# parser, logging differences) and `mpcore_receive` (instead of the C# byte loop in
-`readPacketAsync`); see DESIGN.md.
+Inside Mission Planner the core runs behind three settings, all off by default: `mpcore_shadow`
+(beside the C# parser, logging differences), `mpcore_receive` (instead of the C# byte loop in
+`readPacketAsync`) and `mpcore_send` (encoding the frames `generatePacket` sends); see DESIGN.md.
 
 `mpcore_tests [name]` runs only the C++ cases whose name contains `name`.
 

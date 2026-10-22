@@ -147,6 +147,8 @@ namespace MissionPlanner
             _receiver = null;
             _receiverChecked = false;
             receiver?.Dispose();
+
+            _nativeSend = null;
         }
 
         public event EventHandler<MAVLinkMessage> OnPacketReceived
@@ -1385,8 +1387,18 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                 int i = 0;
 
                 // are we mavlink2 enabled for this sysid/compid
-                if (!MAVlist[sysid, compid].mavlinkv2 && messageType < 256 && !forcemavlink2 &&
-                    sysid <= 255 && gcssysid <= 255)
+                bool mavlink1 = !MAVlist[sysid, compid].mavlinkv2 && messageType < 256 && !forcemavlink2 &&
+                                sysid <= 255 && gcssysid <= 255;
+                byte[] nativePacket = NativeSend()
+                    ? NativeEncode(messageType, data, sysid, compid, mavlink1, forcesigning)
+                    : null;
+
+                if (nativePacket != null)
+                {
+                    packet = nativePacket;
+                    i = packet.Length;
+                }
+                else if (mavlink1)
                 {
                     var info = MAVLINK_MESSAGE_INFOS.SingleOrDefault(p => p.msgid == messageType);
                     if (data.Length != info.minlength)
@@ -1544,6 +1556,59 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
             catch
             {
             }
+        }
+
+        // The C++ core encoding the frames generatePacket sends (setting "mpcore_send", off by
+        // default). Only the encoding moves: MAVLink 1 or 2, signing, keys, timestamps and sequence
+        // numbers are still decided here, so the bytes are the same.
+        private bool? _nativeSend;
+
+        private bool NativeSend()
+        {
+            if (_nativeSend == null)
+                _nativeSend = Settings.Instance.GetBoolean("mpcore_send", false) &&
+                              MpCoreNativeLoader.Available("send", log.Info);
+            return _nativeSend.Value;
+        }
+
+        // generatePacket's frame from the core, or null to encode it here (a message only Mavlink.cs
+        // knows, such as offspec.xml's). Called under writelock.
+        private byte[] NativeEncode(int messageType, byte[] data, uint sysid, int compid, bool mavlink1,
+            bool forcesigning)
+        {
+            var mav = MAVlist[sysid, compid];
+            bool sign = !mavlink1 && (mav.signing || forcesigning);
+            byte[] key = null;
+            ulong timestamp = 0;
+            if (sign)
+            {
+                // as the C# encoder below
+                timestamp = (UInt64) ((DateTime.UtcNow - new DateTime(2015, 1, 1)).TotalMilliseconds * 100);
+                if (timestamp == mav.timestamp)
+                    timestamp++;
+                key = mav.signingKey != null && mav.signingKey.Length == 32 ? mav.signingKey : new byte[32];
+            }
+
+            byte[] frame;
+            try
+            {
+                frame = MissionPlanner.Mavlink.Native.MpFrameEncoder.Encode((uint) messageType, data, gcssysid,
+                    (byte) MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER, sysid, (byte) packetcount, mavlink1, key,
+                    mav.sendlinkid, timestamp, out int error);
+            }
+            catch (Exception ex)
+            {
+                log.Error("mpcore send: disabled after an error", ex);
+                _nativeSend = false;
+                return null;
+            }
+
+            if (frame == null)
+                return null;
+            if (sign)
+                mav.timestamp = timestamp;
+            packetcount++;
+            return frame;
         }
 
         public void SaveToTlog(Span<byte> packet)

@@ -20,7 +20,7 @@ jobs:
           nuget locals all -clear
           msbuild -v:m -restore -t:Build -p:Configuration=Release MissionPlanner.sln
 
-      # The C++ MAVLink core for the mpcore_shadow and mpcore_receive settings, one DLL per process
+      # The C++ MAVLink core for the mpcore_shadow/receive/send settings, one DLL per process
       # bitness (Mission Planner is AnyCPU), placed where MpCoreNativeLoader loads it from: next to
       # the application, and next to the tests that exercise it.
       - name: Build mpcore
@@ -39,10 +39,10 @@ jobs:
       - name: MAVLink protocol regression tests
         shell: pwsh
         env:
-          MPCORE_REQUIRED: '1' # MpCoreReceiveTests fail rather than skip without the native library
+          MPCORE_REQUIRED: '1' # the MpCore*Tests fail rather than skip without the native library
         run: |
           . .github/scripts/run-annotated.ps1
-          $out = Invoke-Annotated { dotnet test MissionPlannerTests/MissionPlannerTests.csproj --configuration Release --filter "FullyQualifiedName~Sysid32Tests|FullyQualifiedName~MpCoreReceiveTests" --logger "trx;LogFileName=sysid32.trx" --logger "console;verbosity=normal" }
+          $out = Invoke-Annotated { dotnet test MissionPlannerTests/MissionPlannerTests.csproj --configuration Release --filter "FullyQualifiedName~Sysid32Tests|FullyQualifiedName~MpCoreReceiveTests|FullyQualifiedName~MpCoreSendTests" --logger "trx;LogFileName=sysid32.trx" --logger "console;verbosity=normal" }
           # which tests ran, readable without a login
           $summary = ($out | Select-String -Pattern '^\s*(Passed|Failed|Skipped) [A-Za-z]|Total tests|Passed!|Failed!' | ForEach-Object { $_.Line.Trim() }) -join "`n"
           Write-Host "::notice title=MAVLink tests::$(ConvertTo-AnnotationText $summary)"
