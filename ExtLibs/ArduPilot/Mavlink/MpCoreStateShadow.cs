@@ -35,6 +35,8 @@ namespace MissionPlanner.ArduPilot.Mavlink
             public long Compared;
             public long Differences;
             public readonly Dictionary<string, long> ByField = new Dictionary<string, long>();
+            /// <summary>The first differences in detail, as logged.</summary>
+            public readonly List<string> Details = new List<string>();
 
             public override string ToString()
             {
@@ -113,8 +115,13 @@ namespace MissionPlanner.ArduPilot.Mavlink
                     _report.ByField.TryGetValue(field.Name, out var n);
                     _report.ByField[field.Name] = n + 1;
                     if (_detailLogs++ < DetailLogsMax)
-                        _log(string.Format("mpcore state shadow: {0} after {1}: C# {2:R}, core {3:R}", field.Name,
-                            (MAVLink.MAVLINK_MSG_ID) message.msgid, csharp, core));
+                    {
+                        var detail = string.Format("{0} after {1} #{2} (seq {3}, len {4}): C# {5:R}, core {6:R}",
+                            field.Name, (MAVLink.MAVLINK_MSG_ID) message.msgid, _report.Messages, message.seq,
+                            message.payloadlength, csharp, core);
+                        _report.Details.Add(detail);
+                        _log("mpcore state shadow: " + detail);
+                    }
                 }
 
                 if (_report.Messages % SummaryEvery == 0)

@@ -110,7 +110,8 @@ namespace MissionPlannerTests.Mavlink
                         Assert.IsNotNull(shadow, "a shadow for " + vehicle.Key);
                         var totals = shadow.Totals;
                         Console.WriteLine(vehicle.Key + ": " + totals);
-                        Assert.AreEqual(0, totals.Differences, vehicle.Key + ": " + totals);
+                        Assert.AreEqual(0, totals.Differences,
+                            vehicle.Key + ": " + totals + "\n" + string.Join("\n", totals.Details));
                         compared += totals.Compared;
                         shadow.Dispose();
                     }
