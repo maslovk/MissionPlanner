@@ -248,12 +248,46 @@ static class MpCoreSmoke
         }
     }
 
+    static byte[] Encode(uint msgid, byte[] payload, byte seq = 0)
+    {
+        int error;
+        return MpFrameEncoder.Encode(msgid, payload, 1, 1, 0, seq, false, null, 0, 0, out error);
+    }
+
+    // the mission download through the binding: count, items, ACK
+    static void Missions()
+    {
+        var sent = new List<uint>();
+        using (var download = new MpMissionDownload(1, 1, 255, 190, 0, true, (msgid, payload) => sent.Add(msgid)))
+        {
+            download.Start();
+            Check(sent.Count == 1 && sent[0] == 43 && download.Count == -1, "MISSION_REQUEST_LIST");
+            download.Frame(Encode(44, new byte[] { 2, 0, 255, 190, 0 }));
+            Check(download.Count == 2 && sent[1] == 51, "count, then MISSION_REQUEST_INT 0");
+            for (byte seq = 0; seq < 2; seq++)
+            {
+                var item = new byte[38];
+                item[28] = seq;
+                item[30] = 16; // NAV_WAYPOINT
+                item[32] = 255;
+                item[33] = 190;
+                download.Frame(Encode(73, item, seq));
+            }
+
+            Check(download.Tick() == MpMissionDownload.Result.Done && download.Received == 2, "done");
+            Check(sent[sent.Count - 1] == 47, "MISSION_ACK last");
+            var items = download.Items;
+            Check(items.Count == 2 && items[1][0] == 0xFD && items[1][7] == 73, "the item frames");
+        }
+    }
+
     static int Main()
     {
         Layouts();
         Encoder();
         Params();
         Exchange();
+        Missions();
         RoundTrip();
         Signing();
         Console.WriteLine((failures == 0 ? "ok" : "FAIL") + " (" + failures + " failed checks, " + IntPtr.Size * 8 + "-bit)");

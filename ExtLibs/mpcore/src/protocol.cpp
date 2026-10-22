@@ -95,6 +95,11 @@ bool view_frame(const uint8_t *frame, std::size_t len, FrameView &out) {
         }
         out.compid = frame[o++];
         out.msgid = uint32_t{frame[o]} | uint32_t{frame[o + 1]} << 8 | uint32_t{frame[o + 2]} << 16;
+        o += 3;
+        out.header_target = (frame[2] & kIflagTarget32) != 0;
+        out.header_target_sysid = out.header_target ? uint32_t{frame[o]} | uint32_t{frame[o + 1]} << 8 |
+                                                          uint32_t{frame[o + 2]} << 16 | uint32_t{frame[o + 3]} << 24
+                                                    : 0;
     } else {
         return false;
     }
@@ -102,6 +107,26 @@ bool view_frame(const uint8_t *frame, std::size_t len, FrameView &out) {
     if (header + out.payload_len + 2 > len)
         return false;
     out.payload = frame + header;
+    return true;
+}
+
+bool frame_targets(const FrameView &frame, uint32_t sysid, uint8_t compid) {
+    const MsgInfo *info = find_msg(frame.msgid);
+    // a zero-trimmed field is zero: broadcast
+    auto field = [&frame](uint8_t ofs) -> uint8_t { return ofs < frame.payload_len ? frame.payload[ofs] : 0; };
+    if (frame.header_target) {
+        if (frame.header_target_sysid != 0 && frame.header_target_sysid != sysid)
+            return false;
+    } else if (info != nullptr && info->target_system_ofs != kNoField) {
+        const uint8_t target = field(info->target_system_ofs);
+        if (target != 0 && target != sysid)
+            return false;
+    }
+    if (info != nullptr && info->target_component_ofs != kNoField) {
+        const uint8_t target = field(info->target_component_ofs);
+        if (target != 0 && target != compid)
+            return false;
+    }
     return true;
 }
 

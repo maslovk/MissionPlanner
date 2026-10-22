@@ -303,6 +303,37 @@ MPCORE_API int MPCORE_CALL mp_exchange_reply(mp_exchange *exchange, uint8_t *out
 /* How many times the request was sent. */
 MPCORE_API uint32_t MPCORE_CALL mp_exchange_sends(mp_exchange *exchange);
 
+/*
+ * Mission, fence or rally list download (MISSION_REQUEST_LIST, MISSION_COUNT, the items one by one,
+ * MISSION_ACK), with Mission Planner's timeouts: 700 ms and 6 resends for the count, 2.5 s and 5
+ * per item. Replies must be for gcs_sysid/gcs_compid and of the mission type. Same shape as the
+ * other protocol objects: no I/O, not thread-safe, send runs inside the calls.
+ */
+typedef struct mp_mission_download mp_mission_download;
+
+/* mp_mission_download_tick() results */
+#define MP_MISSION_RUNNING 0
+#define MP_MISSION_DONE    1
+#define MP_MISSION_FAILED  2 /* timed out; mp_mission_download_count() < 0: while counting */
+
+MPCORE_API mp_mission_download *MPCORE_CALL mp_mission_download_create(uint32_t sysid, uint8_t compid,
+                                                                        uint32_t gcs_sysid, uint8_t gcs_compid,
+                                                                        uint8_t mission_type, uint8_t use_int,
+                                                                        mp_message_fn send, void *user);
+MPCORE_API void MPCORE_CALL mp_mission_download_destroy(mp_mission_download *download);
+MPCORE_API int MPCORE_CALL mp_mission_download_start(mp_mission_download *download, int64_t now_us);
+MPCORE_API int MPCORE_CALL mp_mission_download_frame(mp_mission_download *download, const uint8_t *frame,
+                                                     size_t len, int64_t now_us);
+/* Resends when due. Returns MP_MISSION_* (or a negative MP_ERR_*). */
+MPCORE_API int MPCORE_CALL mp_mission_download_tick(mp_mission_download *download, int64_t now_us);
+/* The vehicle's count, or -1 before it answered. */
+MPCORE_API int MPCORE_CALL mp_mission_download_count(mp_mission_download *download);
+/* Items received so far. */
+MPCORE_API size_t MPCORE_CALL mp_mission_download_received(mp_mission_download *download);
+/* Copies item index (its MISSION_ITEM_INT or MISSION_ITEM frame); returns its length. */
+MPCORE_API int MPCORE_CALL mp_mission_download_item(mp_mission_download *download, size_t index, uint8_t *out,
+                                                    size_t capacity);
+
 #ifdef __cplusplus
 }
 #endif

@@ -236,6 +236,35 @@ namespace MissionPlanner.Mavlink.Native
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern uint mp_exchange_sends(IntPtr exchange);
 
+        public const int MP_MISSION_RUNNING = 0;
+        public const int MP_MISSION_DONE = 1;
+        public const int MP_MISSION_FAILED = 2;
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern IntPtr mp_mission_download_create(uint sysid, byte compid, uint gcs_sysid, byte gcs_compid,
+            byte mission_type, byte use_int, mp_message_fn send, IntPtr user);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mp_mission_download_destroy(IntPtr download);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_mission_download_start(IntPtr download, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_mission_download_frame(IntPtr download, byte[] frame, UIntPtr len, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_mission_download_tick(IntPtr download, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_mission_download_count(IntPtr download);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern UIntPtr mp_mission_download_received(IntPtr download);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_mission_download_item(IntPtr download, UIntPtr index, byte[] output, UIntPtr capacity);
+
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern uint mp_abi_version();
 
@@ -565,6 +594,123 @@ namespace MissionPlanner.Mavlink.Native
                 if (_exchange != IntPtr.Zero)
                     MpCoreNative.mp_exchange_destroy(_exchange);
                 _exchange = IntPtr.Zero;
+            }
+
+            GC.KeepAlive(_onSend);
+        }
+    }
+
+    /// <summary>
+    /// A mission, fence or rally list download (see mp_mission_download in mpcore.h). Thread-safe
+    /// like MpParamDownload.
+    /// </summary>
+    public sealed class MpMissionDownload : IDisposable
+    {
+        public enum Result
+        {
+            Running = MpCoreNative.MP_MISSION_RUNNING,
+            Done = MpCoreNative.MP_MISSION_DONE,
+            Failed = MpCoreNative.MP_MISSION_FAILED,
+        }
+
+        readonly object _sync = new object();
+        readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        readonly MpCoreNative.mp_message_fn _onSend;
+        readonly Action<uint, byte[]> _send;
+        IntPtr _download;
+
+        public MpMissionDownload(uint sysId, byte compId, uint gcsSysId, byte gcsCompId, byte missionType, bool useInt,
+            Action<uint, byte[]> send)
+        {
+            _send = send;
+            _onSend = OnSend;
+            _download = MpCoreNative.mp_mission_download_create(sysId, compId, gcsSysId, gcsCompId, missionType,
+                (byte)(useInt ? 1 : 0), _onSend, IntPtr.Zero);
+            if (_download == IntPtr.Zero)
+                throw new InvalidOperationException("mp_mission_download_create failed");
+        }
+
+        long NowUs => _clock.Elapsed.Ticks / (TimeSpan.TicksPerMillisecond / 1000);
+
+        public void Start()
+        {
+            lock (_sync)
+                if (_download != IntPtr.Zero)
+                    MpCoreNative.mp_mission_download_start(_download, NowUs);
+        }
+
+        public void Frame(byte[] frame)
+        {
+            if (frame == null || frame.Length == 0)
+                return;
+            lock (_sync)
+                if (_download != IntPtr.Zero)
+                    MpCoreNative.mp_mission_download_frame(_download, frame, (UIntPtr)frame.Length, NowUs);
+        }
+
+        public Result Tick()
+        {
+            lock (_sync)
+                return _download == IntPtr.Zero ? Result.Failed : (Result)MpCoreNative.mp_mission_download_tick(_download, NowUs);
+        }
+
+        /// <summary>The vehicle's count, or -1 before it answered.</summary>
+        public int Count
+        {
+            get
+            {
+                lock (_sync)
+                    return _download == IntPtr.Zero ? -1 : MpCoreNative.mp_mission_download_count(_download);
+            }
+        }
+
+        public int Received
+        {
+            get
+            {
+                lock (_sync)
+                    return _download == IntPtr.Zero ? 0 : (int)MpCoreNative.mp_mission_download_received(_download);
+            }
+        }
+
+        /// <summary>The item frames received, in seq order.</summary>
+        public System.Collections.Generic.List<byte[]> Items
+        {
+            get
+            {
+                var items = new System.Collections.Generic.List<byte[]>();
+                lock (_sync)
+                {
+                    int n = _download == IntPtr.Zero ? 0 : (int)MpCoreNative.mp_mission_download_received(_download);
+                    for (int i = 0; i < n; i++)
+                    {
+                        var buffer = new byte[MpCoreNative.MPCORE_MAX_FRAME_LEN];
+                        int len = MpCoreNative.mp_mission_download_item(_download, (UIntPtr)i, buffer, (UIntPtr)buffer.Length);
+                        if (len <= 0)
+                            break;
+                        Array.Resize(ref buffer, len);
+                        items.Add(buffer);
+                    }
+                }
+
+                return items;
+            }
+        }
+
+        void OnSend(IntPtr user, uint msgid, IntPtr payload, UIntPtr len)
+        {
+            var bytes = new byte[(int)len];
+            Marshal.Copy(payload, bytes, 0, bytes.Length);
+            try { _send?.Invoke(msgid, bytes); } catch (Exception ex) { Console.Error.WriteLine("mpcore mission Send: " + ex); }
+        }
+
+        public void Dispose()
+        {
+            lock (_sync)
+            {
+                if (_download != IntPtr.Zero)
+                    MpCoreNative.mp_mission_download_destroy(_download);
+                _download = IntPtr.Zero;
             }
 
             GC.KeepAlive(_onSend);

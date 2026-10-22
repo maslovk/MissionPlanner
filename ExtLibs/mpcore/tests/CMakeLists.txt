@@ -5,6 +5,7 @@ add_executable(mpcore_tests
     test_seq.cpp
     test_exchange.cpp
     test_link.cpp
+    test_mission.cpp
     test_params.cpp
 )
 target_include_directories(mpcore_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")

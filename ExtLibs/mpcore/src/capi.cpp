@@ -6,6 +6,7 @@
 
 #include "exchange.hpp"
 #include "link.hpp"
+#include "mission_download.hpp"
 #include "mpcore/mpcore.h"
 #include "param_download.hpp"
 #include "protocol.hpp"
@@ -23,6 +24,17 @@ struct mp_exchange {
                   send(user, msgid, payload, len);
           }) {}
     mpcore::Exchange exchange;
+};
+
+struct mp_mission_download {
+    mp_mission_download(uint32_t sysid, uint8_t compid, uint32_t gcs_sysid, uint8_t gcs_compid, uint8_t type,
+                        bool use_int, mp_message_fn send, void *user)
+        : download(sysid, compid, gcs_sysid, gcs_compid, type, use_int,
+                   [send, user](uint32_t msgid, const uint8_t *payload, std::size_t len) {
+                       if (send)
+                           send(user, msgid, payload, len);
+                   }) {}
+    mpcore::MissionDownload download;
 };
 
 struct mp_param_download {
@@ -442,6 +454,77 @@ MPCORE_API int MPCORE_CALL mp_exchange_reply(mp_exchange *exchange, uint8_t *out
 
 MPCORE_API uint32_t MPCORE_CALL mp_exchange_sends(mp_exchange *exchange) {
     return exchange == nullptr ? 0 : exchange->exchange.sends();
+}
+
+MPCORE_API mp_mission_download *MPCORE_CALL mp_mission_download_create(uint32_t sysid, uint8_t compid,
+                                                                        uint32_t gcs_sysid, uint8_t gcs_compid,
+                                                                        uint8_t mission_type, uint8_t use_int,
+                                                                        mp_message_fn send, void *user) {
+    return new (std::nothrow)
+        mp_mission_download(sysid, compid, gcs_sysid, gcs_compid, mission_type, use_int != 0, send, user);
+}
+
+MPCORE_API void MPCORE_CALL mp_mission_download_destroy(mp_mission_download *download) {
+    delete download;
+}
+
+MPCORE_API int MPCORE_CALL mp_mission_download_start(mp_mission_download *download, int64_t now_us) {
+    if (download == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        download->download.start(now_us);
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+    return MP_OK;
+}
+
+MPCORE_API int MPCORE_CALL mp_mission_download_frame(mp_mission_download *download, const uint8_t *frame,
+                                                     size_t len, int64_t now_us) {
+    if (download == nullptr || frame == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        download->download.on_frame(frame, len, now_us);
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+    return MP_OK;
+}
+
+MPCORE_API int MPCORE_CALL mp_mission_download_tick(mp_mission_download *download, int64_t now_us) {
+    if (download == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        switch (download->download.tick(now_us)) {
+        case mpcore::MissionDownload::State::Done:
+            return MP_MISSION_DONE;
+        case mpcore::MissionDownload::State::Failed:
+            return MP_MISSION_FAILED;
+        default:
+            return MP_MISSION_RUNNING;
+        }
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+}
+
+MPCORE_API int MPCORE_CALL mp_mission_download_count(mp_mission_download *download) {
+    return download == nullptr ? MP_ERR_ARGUMENT : download->download.count();
+}
+
+MPCORE_API size_t MPCORE_CALL mp_mission_download_received(mp_mission_download *download) {
+    return download == nullptr ? 0 : download->download.received();
+}
+
+MPCORE_API int MPCORE_CALL mp_mission_download_item(mp_mission_download *download, size_t index, uint8_t *out,
+                                                    size_t capacity) {
+    if (download == nullptr || index >= download->download.items().size())
+        return MP_ERR_ARGUMENT;
+    const std::vector<uint8_t> &item = download->download.items()[index];
+    if (out == nullptr || capacity < item.size())
+        return MP_ERR_ARGUMENT;
+    std::memcpy(out, item.data(), item.size());
+    return static_cast<int>(item.size());
 }
 
 }  // extern "C"

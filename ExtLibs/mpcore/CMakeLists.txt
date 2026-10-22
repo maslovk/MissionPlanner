@@ -47,6 +47,7 @@ add_library(mpcore_core STATIC
     src/exchange.cpp
     src/frame_parser.cpp
     src/link.cpp
+    src/mission_download.cpp
     src/param_download.cpp
     src/protocol.cpp
     src/seq_tracker.cpp

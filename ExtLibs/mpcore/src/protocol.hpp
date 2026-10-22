@@ -60,10 +60,17 @@ struct FrameView {
     uint8_t seq = 0;
     const uint8_t *payload = nullptr;
     std::size_t payload_len = 0;  // as on the wire: MAVLink 2 may be zero-trimmed
+    bool header_target = false;   // TARGET32
+    uint32_t header_target_sysid = 0;
 };
 
 // false if frame is not a complete MAVLink 1/2 frame
 bool view_frame(const uint8_t *frame, std::size_t len, FrameView &out);
+
+// Whether a frame is for sysid/compid, as Mission Planner's IsTargetedTo: its target system (the
+// TARGET32 header, else the payload field) is 0 or sysid, and its target component (payload) is 0
+// or compid. A message without target fields is for everyone.
+bool frame_targets(const FrameView &frame, uint32_t sysid, uint8_t compid);
 
 // Copies a payload into out (out_len bytes, the message's full length), zero-filling what
 // MAVLink 2 trimmed.
