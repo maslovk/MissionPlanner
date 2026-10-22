@@ -4304,8 +4304,20 @@ namespace MissionPlanner
                         }
                         break;
                 }
+
+                // the C++ core's decode beside this one, compared ("mpcore_state_shadow")
+                if (!_stateShadowTried && parent != null)
+                {
+                    _stateShadowTried = true;
+                    _stateShadow = MissionPlanner.ArduPilot.Mavlink.MpCoreStateShadow.TryCreate(parent.sysid, parent.compid);
+                }
+
+                _stateShadow?.Check(this, mavLinkMessage);
             }
         }
+
+        private MissionPlanner.ArduPilot.Mavlink.MpCoreStateShadow _stateShadow;
+        private bool _stateShadowTried;
 
         [GroupText("AHRS2")]
         public float ahrs2_roll { get; set; }

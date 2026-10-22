@@ -31,7 +31,8 @@ Inside Mission Planner the core runs behind settings, all off by default: `mpcor
 the C# parser, logging differences), `mpcore_receive` (instead of the C# byte loop in
 `readPacketAsync`), `mpcore_send` (encoding the frames `generatePacket` sends), `mpcore_params`
 (parameter download, set and read run by the core), `mpcore_missions` (mission download and
-upload) and `mpcore_ftp` (MAVFtp's transfers, listings and commands); see DESIGN.md.
+upload) `mpcore_ftp` (MAVFtp's transfers, listings and commands) and `mpcore_state_shadow` (CurrentState's
+telemetry decoded beside it, differences logged); see DESIGN.md.
 
 `mpcore_tests [name]` runs only the C++ cases whose name contains `name`.
 

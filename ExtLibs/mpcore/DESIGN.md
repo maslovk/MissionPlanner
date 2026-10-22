@@ -200,7 +200,26 @@ version against the same simulated vehicle.
    packets, bursts, holes, short files, sessions, timeouts, listings, commands), the C ABI and
    smoke tests, and `MissionPlannerTests/Mavlink/MpCoreFtpTests.cs` (both ways on one vehicle that
    loses a burst packet and a write ACK: the same file, upload, listing, CRC and errors).
-6. `CurrentState`.
+6. **`CurrentState` (started: a shadow, setting `mpcore_state_shadow`).** `VehicleState`
+   (`src/vehicle_state.*`, C ABI `mp_vehicle_*` with the flat `mp_vehicle_state`, C# `MpVehicle`)
+   decodes what the HUD, map and status screens are built from as `Parent_OnPacketReceived` and
+   the property setters do: HEARTBEAT, SYS_STATUS, EXTENDED_SYS_STATE, BATTERY2, BATTERY_STATUS
+   (nine batteries, battery 0's voltage smoothed 0.4/0.6, its remaining clamped), ATTITUDE,
+   GLOBAL_POSITION_INT and GPS_RAW_INT (the GPS's position only while GLOBAL_POSITION_INT has none,
+   its speed and course only with a fix), GPS_STATUS, RADIO/RADIO_STATUS (from any system),
+   MISSION_CURRENT, NAV_CONTROLLER_OUTPUT, RC_CHANNELS(_RAW), SERVO_OUTPUT_RAW (two ports), VFR_HUD
+   (reversed throttle), VIBRATION, EKF_STATUS_REPORT (CurrentState's red rules), SCALED_PRESSURE and
+   TERRAIN_REPORT. The values are the stored ones, before display units; the layout is ordered by
+   field size so C and C# cannot pad it differently. `MpCoreStateShadow` decodes each message a
+   CurrentState takes with the core too and, after each one the core decodes, compares the values
+   that message sets with CurrentState's (backing fields where a property converts units) and logs
+   the differences, like the frame shadow. What reads settings, parameters or the firmware's mode
+   names (the mode string, messageHigh, speech, low airspeed) and what CurrentState derives from
+   the wall clock (climb rate without VFR_HUD, mAh from SYS_STATUS current, time in the air) stays
+   in C#. Next: the rest of the messages, then CurrentState reading the core's values for the
+   decoded ones. Tests: `tests/test_vehicle_state.cpp`, the smoke test (layout and a decode) and
+   `MissionPlannerTests/Mavlink/MpCoreStateShadowTests.cs` (flight.tlog through MAVLinkInterface and
+   CurrentState with the shadow: no differences).
 
 ## Shadow mode
 
