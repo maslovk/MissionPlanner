@@ -92,6 +92,12 @@ running meanwhile.
   with MISSION_REQUEST.
 * `getParamListAsync` reads packets without `giveComport`, competing with the main reader.
 * `giveComport`'s "wait for the current read" locks the `SemaphoreSlim` object as a monitor, which never waits for a read.
+* MAVFtp takes any NAK as the answer to its request (no opcode or seq check), answers NoSessionsAvailable
+  with a blocking `kCmdResetSessions` inside its packet handler (on the reader thread, which then cannot
+  deliver the reply), sends ResetSessions, TerminateSession and ReadFile without setting the target, and
+  `kCmdCreateDirectory` throws on errno EEXIST although it marks the request complete.
+* `kCmdWriteFile(Stream)` finishes at the last chunk's ACK even when an earlier chunk was lost, and
+  `kCmdBurstReadFile` returns the partial file on a timeout; its `FindMissing` never reports a missing tail.
 * Signed frames are not checked for replay (the timestamp is computed and ignored). mpcore keeps
   this for now for compatibility; it should become an option once signing is driven by the core.
 
@@ -173,7 +179,27 @@ version against the same simulated vehicle.
    `tests/test_mission.cpp`, the smoke test and `MpCoreMissionTests.NativeMissionUploadSendsTheSameItems`
    (both ways, with and without MISSION_INT, a lost count and a lost request: the same items on the
    vehicle and in `wps`, the same resends).
-5. MAVFTP.
+5. **MAVFTP (done, setting `mpcore_ftp`).** `Ftp` (`src/ftp.*`, C ABI `mp_ftp_*`, C# `MpFtp`) runs
+   one MAVFtp operation at a time: `GetFile` (ResetSessions, OpenFileRO, BurstReadFile from 0, each
+   burst continuing where the furthest data ended, then the holes by ReadFile; a short read or an
+   EOF NAK ends the file), `UploadFile` (ResetSessions, CreateFile, 80-byte WriteFiles, the first
+   alone and then up to 5 outstanding, ResetSessions), `kCmdListDirectory` (timed, falling back to
+   plain for good when the vehicle NAKs it) and the single commands, with RetryTimeout's timings
+   (ResetSessions 5 x 1 s, OpenFileRO 5 x 2 s, listings 5 x 1 s, CalcFileCRC32 3 x 30 s, the rest
+   30 x 1 s, data restarting the count). Replies and NAKs must answer the request (its opcode and,
+   but for a burst, its seq) and be for this GCS; the next seq follows the vehicle's latest reply,
+   which keeps ArduPilot's "same seq again: send the last reply again" from firing on a new
+   request. `MAVFtp` keeps its API: with the setting each of those methods runs the core on its
+   own thread as the RetryTimeout loops do (the reader thread delivers the replies), shares
+   `seq_no` and the plain-listing flag with it, and turns the outcome into the same exceptions,
+   `false` or `null`. AP_REPL's own sessions (`kCmdOpenFileRO`/`WO`, `kCmdReadFile`, `kCmdWriteFile`
+   at an offset) stay in C#. Differences: a download that times out returns `null` (MAVFtp's burst
+   returns what it had), an upload ends once every chunk is acknowledged, a NAK that MAVFtp only
+   logs ends the operation at once with the outcome MAVFtp reaches after its retries, and a
+   missing tail is read. Tests: `tests/test_ftp.cpp` (a simulated ArduPilot FTP server: lost
+   packets, bursts, holes, short files, sessions, timeouts, listings, commands), the C ABI and
+   smoke tests, and `MissionPlannerTests/Mavlink/MpCoreFtpTests.cs` (both ways on one vehicle that
+   loses a burst packet and a write ACK: the same file, upload, listing, CRC and errors).
 6. `CurrentState`.
 
 ## Shadow mode

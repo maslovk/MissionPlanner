@@ -54,7 +54,7 @@ same bytes as `MAVLinkInterface.readPacketAsync` and logs differences), `mpcore_
 (`MpCoreReceiver`: frames the bytes instead of `readPacketAsync`'s byte loop, everything after
 framing unchanged), `mpcore_send` (`generatePacket` keeps every decision, the core encodes) and
 `mpcore_params` (the parameter download, set and read decided in the core) and `mpcore_missions`
-(mission download and upload), phase 2 in DESIGN.md.
+(mission download and upload) and `mpcore_ftp` (MAVFtp), phase 2 in DESIGN.md.
 
 ```sh
 git submodule update --init ExtLibs/mpcore/third_party/pymavlink

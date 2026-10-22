@@ -14,6 +14,7 @@ using uint16_t = System.UInt16;
 using uint32_t = System.UInt32;
 using MissionPlanner.Utilities;
 using System.Reactive.Linq;
+using MpFtp = MissionPlanner.Mavlink.Native.MpFtp;
 
 namespace MissionPlanner.ArduPilot.Mavlink
 {
@@ -560,6 +561,8 @@ namespace MissionPlanner.ArduPilot.Mavlink
         public MemoryStream GetFile(string file, CancellationTokenSource cancel, bool burst = true, byte readsize = rwSize)
         {
             log.InfoFormat("GetFile {0}-{1} {2}", _sysid, _compid, file);
+            if (UseNative)
+                return GetFileNative(file, cancel, burst, readsize);
             Progress?.Invoke("Opening file " + file, -1);
             kCmdResetSessions();
             kCmdOpenFileRO(file, out var size, cancel);
@@ -575,6 +578,12 @@ namespace MissionPlanner.ArduPilot.Mavlink
 
         public void UploadFile(string file, string srcfile, CancellationTokenSource cancel)
         {
+            if (UseNative)
+            {
+                UploadFileNative(file, File.OpenRead(srcfile), srcfile, cancel);
+                return;
+            }
+
             var size = 0;
             kCmdResetSessions();
             kCmdCreateFile(file, ref size, cancel);
@@ -584,6 +593,12 @@ namespace MissionPlanner.ArduPilot.Mavlink
 
         public void UploadFile(string file, Stream srcfile, CancellationTokenSource cancel)
         {
+            if (UseNative)
+            {
+                UploadFileNative(file, srcfile, Path.GetFileName(file), cancel);
+                return;
+            }
+
             var size = 0;
             kCmdResetSessions();
             kCmdCreateFile(file, ref size, cancel);
@@ -952,6 +967,16 @@ namespace MissionPlanner.ArduPilot.Mavlink
 
         public bool kCmdCalcFileCRC32(string file, ref uint crc32, CancellationTokenSource cancel)
         {
+            if (UseNative)
+            {
+                crc32 = UInt32.MaxValue;
+                var done = CommandNative(FTPOpcode.kCmdCalcFileCRC32, file, null, cancel, "Failed to OpenFile - ",
+                    false, true, out var value);
+                if (done)
+                    crc32 = value;
+                return done;
+            }
+
             fileTransferProtocol.target_system = (byte)(_sysid);
             fileTransferProtocol.target_component = _compid;
             fileTransferProtocol.target_network = 0;
@@ -1084,6 +1109,10 @@ namespace MissionPlanner.ArduPilot.Mavlink
 
         public bool kCmdCreateDirectory(string file, CancellationTokenSource cancel)
         {
+            if (UseNative)
+                return CommandNative(FTPOpcode.kCmdCreateDirectory, file, null, cancel, "Mavftp responded - ", true,
+                    false, out _);
+
             fileTransferProtocol.target_system = (byte)(_sysid);
             fileTransferProtocol.target_component = _compid;
             fileTransferProtocol.target_network = 0;
@@ -1286,6 +1315,9 @@ namespace MissionPlanner.ArduPilot.Mavlink
 
         public List<FtpFileInfo> kCmdListDirectory(string dir, CancellationTokenSource cancel)
         {
+            if (UseNative)
+                return ListDirectoryNative(dir, cancel);
+
             // Ask for modification times first. A vehicle which does not know the opcode NAKs
             // it, and we drop back to the plain listing, for this and every later listing.
             if (!listDirectoryWithTimeUnsupported)
@@ -1700,6 +1732,9 @@ namespace MissionPlanner.ArduPilot.Mavlink
         public bool kCmdRemoveDirectory(string file, CancellationTokenSource cancel)
         {
             file = file.Replace("//", "/");
+            if (UseNative)
+                return CommandNative(FTPOpcode.kCmdRemoveDirectory, file, null, cancel, "Failed to remove " + file + " - ", false,
+                    true, out _);
             fileTransferProtocol.target_system = (byte)(_sysid);
             fileTransferProtocol.target_component = _compid;
             fileTransferProtocol.target_network = 0;
@@ -1785,6 +1820,9 @@ namespace MissionPlanner.ArduPilot.Mavlink
         public bool kCmdRemoveFile(string file, CancellationTokenSource cancel)
         {
             file = file.Replace("//", "/");
+            if (UseNative)
+                return CommandNative(FTPOpcode.kCmdRemoveFile, file, null, cancel, "Failed to remove " + file + " - ", false,
+                    true, out _);
             fileTransferProtocol.target_system = (byte)(_sysid);
             fileTransferProtocol.target_component = _compid;
             fileTransferProtocol.target_network = 0;
@@ -1869,6 +1907,10 @@ namespace MissionPlanner.ArduPilot.Mavlink
 
         public bool kCmdRename(string src, string dest, CancellationTokenSource cancel)
         {
+            if (UseNative)
+                return CommandNative(FTPOpcode.kCmdRename, src, dest, cancel, "Mavftp responded - ", false, false,
+                    out _);
+
             fileTransferProtocol.target_system = (byte)(_sysid);
             fileTransferProtocol.target_component = _compid;
             fileTransferProtocol.target_network = 0;
@@ -1946,6 +1988,9 @@ namespace MissionPlanner.ArduPilot.Mavlink
 
         public bool kCmdResetSessions()
         {
+            if (UseNative)
+                return CommandNative(FTPOpcode.kCmdResetSessions, null, null, null, "Mavftp responded - ", false, false, out _);
+
             var payload = new FTPPayloadHeader()
             {
                 opcode = FTPOpcode.kCmdResetSessions,
@@ -2001,6 +2046,9 @@ namespace MissionPlanner.ArduPilot.Mavlink
 
         public bool kCmdTerminateSession()
         {
+            if (UseNative)
+                return CommandNative(FTPOpcode.kCmdTerminateSession, null, null, null, "Mavftp responded - ", false, false, out _);
+
             var payload = new FTPPayloadHeader()
             {
                 opcode = FTPOpcode.kCmdTerminateSession,
@@ -2056,6 +2104,10 @@ namespace MissionPlanner.ArduPilot.Mavlink
 
         public bool kCmdTruncateFile(string file, CancellationTokenSource cancel)
         {
+            if (UseNative)
+                return CommandNative(FTPOpcode.kCmdTruncateFile, file, null, cancel, "Mavftp responded - ", false,
+                    false, out _);
+
             fileTransferProtocol.target_system = (byte)(_sysid);
             fileTransferProtocol.target_component = _compid;
             fileTransferProtocol.target_network = 0;
@@ -2396,6 +2448,225 @@ namespace MissionPlanner.ArduPilot.Mavlink
                 if (ex != null)
                     throw ex;
                 return ans;
+            }
+        }
+
+        // The C++ core (setting "mpcore_ftp") runs GetFile, UploadFile, the listings and the single
+        // commands; the sessions AP_REPL keeps open itself (kCmdOpenFileRO/WO, kCmdReadFile, kCmdWriteFile)
+        // stay here. Both use seq_no, and listDirectoryWithTimeUnsupported is kept across operations. The
+        // outcomes are MAVFtp's: the same exceptions, else false or null.
+        private bool? useNative;
+
+        private bool UseNative
+        {
+            get
+            {
+                if (useNative == null)
+                    useNative = Settings.Instance.GetBoolean("mpcore_ftp", false) &&
+                                MpCoreNativeLoader.Available("ftp", log.Info);
+                return useNative.Value;
+            }
+        }
+
+        private MpFtp NewNative()
+        {
+            return new MpFtp(_sysid, _compid, MAVLinkInterface.gcssysid,
+                (byte) MAVLink.MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER,
+                (msgid, payload) => _mavint.sendPacket(MavlinkUtil.ByteArrayToStructureGC(payload,
+                    typeof(MAVLink.mavlink_file_transfer_protocol_t), 0, (byte) payload.Length), _sysid, _compid));
+        }
+
+        // Runs an operation as the RetryTimeout loops do (the reader thread delivers the replies),
+        // until it is done, fails or is cancelled.
+        private MpFtp.Result RunNative(MpFtp ftp, Func<bool> start, CancellationTokenSource cancel,
+            Action progress = null)
+        {
+            ftp.NextSeq = seq_no;
+            ftp.PlainListing = listDirectoryWithTimeUnsupported;
+            var sub = _mavint.SubscribeToPacketType(MAVLink.MAVLINK_MSG_ID.FILE_TRANSFER_PROTOCOL, message =>
+            {
+                ftp.Frame(message.buffer);
+                return true;
+            }, _sysid, _compid);
+            try
+            {
+                if (!start())
+                    throw new ArgumentException("MAVFtp: the path is too long");
+                while (true)
+                {
+                    if (cancel != null && cancel.IsCancellationRequested)
+                    {
+                        ftp.Cancel();
+                        log.Info($"cancel {(FTPOpcode) ftp.Opcode}");
+                        return MpFtp.Result.Failed;
+                    }
+
+                    var state = ftp.Tick();
+                    if (state != MpFtp.Result.Running)
+                        return state;
+                    progress?.Invoke();
+                    Thread.Sleep(10);
+                }
+            }
+            finally
+            {
+                _mavint.UnSubscribeToPacketType(sub);
+                seq_no = ftp.NextSeq;
+                if (ftp.PlainListing && !listDirectoryWithTimeUnsupported)
+                    log.Info("ListDirectoryWithTime unsupported, falling back to ListDirectory");
+                listDirectoryWithTimeUnsupported = ftp.PlainListing;
+            }
+        }
+
+        // The exception MAVFtp throws for the NAK that ended an operation, or null where it returns false
+        // or null: a timeout, a cancel, and the NAKs it only logs.
+        private Exception NativeError(MpFtp ftp, string errnoText, string file, bool failThrows, bool notFoundThrows)
+        {
+            var errorcode = (FTPErrorCode) ftp.Nak;
+            var opcode = (FTPOpcode) ftp.NakOpcode;
+            if (errorcode == FTPErrorCode.kErrNone)
+            {
+                log.Info($"no reply {(FTPOpcode) ftp.Opcode}");
+                return null;
+            }
+
+            if (errorcode == FTPErrorCode.kErrFailErrno)
+            {
+                var _ftp_errno = (errno) ftp.NakErrno;
+                log.Error(opcode + " " + errorcode + " " + _ftp_errno);
+                return new Exception(errnoText + opcode + " " + errorcode + " " + _ftp_errno);
+            }
+
+            log.Error(opcode + " " + errorcode);
+            if (errorcode == FTPErrorCode.kErrFail && failThrows)
+                return new Exception("Mavftp responded - Err Fail");
+            if (errorcode == FTPErrorCode.kErrFileNotFound && notFoundThrows)
+                return new FileNotFoundException("File Not Found", file);
+            return null;
+        }
+
+        private MemoryStream GetFileNative(string file, CancellationTokenSource cancel, bool burst, byte readsize)
+        {
+            Progress?.Invoke("Opening file " + file, -1);
+            using (var ftp = NewNative())
+            {
+                int reported = -1;
+                var state = RunNative(ftp, () => ftp.GetFile(file, readsize, burst), cancel, () =>
+                {
+                    var size = ftp.FileSize;
+                    if (size <= 0)
+                        return;
+                    var percent = (int) (ftp.Progress * 100 / (ulong) size);
+                    if (percent == reported)
+                        return;
+                    reported = percent;
+                    Progress?.Invoke(file, percent);
+                });
+                Progress?.Invoke(file, 100);
+                if (state == MpFtp.Result.Done)
+                {
+                    var data = ftp.Data();
+                    var answer = new MemoryStream(data.Length);
+                    answer.Write(data, 0, data.Length);
+                    answer.Position = 0;
+                    log.InfoFormat("Done {0} {1}", file, data.Length);
+                    return answer;
+                }
+
+                var opcode = (FTPOpcode) ftp.NakOpcode;
+                var ex = NativeError(ftp, "Mavftp responded - ", file,
+                    opcode == FTPOpcode.kCmdOpenFileRO || (opcode == FTPOpcode.kCmdReadFile && !burst),
+                    opcode == FTPOpcode.kCmdOpenFileRO);
+                if (ex != null)
+                    throw ex;
+                return null;
+            }
+        }
+
+        private void UploadFileNative(string file, Stream srcfile, string friendlyname, CancellationTokenSource cancel)
+        {
+            byte[] data;
+            using (var stream = srcfile)
+            {
+                var copy = new MemoryStream();
+                stream.CopyTo(copy);
+                data = copy.ToArray();
+            }
+
+            log.Info("put " + file + " " + data.Length);
+            using (var ftp = NewNative())
+            {
+                int reported = -1;
+                var state = RunNative(ftp, () => ftp.PutFile(file, data), cancel, () =>
+                {
+                    if (data.Length == 0)
+                        return;
+                    var percent = (int) (ftp.Progress * 100 / (ulong) data.Length);
+                    if (percent == reported)
+                        return;
+                    reported = percent;
+                    Progress?.Invoke(friendlyname, percent);
+                });
+                Progress?.Invoke(friendlyname, 100);
+                if (state == MpFtp.Result.Done)
+                    return;
+                var create = (FTPOpcode) ftp.NakOpcode == FTPOpcode.kCmdCreateFile;
+                var ex = NativeError(ftp, create ? "Failed to OpenFile - " : "Mavftp responded - ", file, true, create);
+                if (ex != null)
+                    throw ex;
+            }
+        }
+
+        private List<FtpFileInfo> ListDirectoryNative(string dir, CancellationTokenSource cancel)
+        {
+            if (dir.Length > 1)
+                dir = dir.TrimEnd('/');
+            log.Info("get list " + dir);
+            Progress?.Invoke(dir + " Listing", 0);
+            using (var ftp = NewNative())
+            {
+                var state = RunNative(ftp, () => ftp.List(dir), cancel);
+                var answer = new List<FtpFileInfo>();
+                foreach (var entry in ftp.Entries())
+                {
+                    DateTime? modified = entry.MTime == 0
+                        ? (DateTime?) null
+                        : new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(entry.MTime);
+                    if (entry.Kind == 'D')
+                        answer.Add(new FtpFileInfo(entry.Name, dir, true, 0, modified));
+                    else if (entry.Kind == 'S')
+                        answer.Add(new FtpFileInfo("", dir, true));
+                    else
+                        answer.Add(new FtpFileInfo(entry.Name, dir, false, entry.Size, modified));
+                }
+
+                Progress?.Invoke(dir + " Ready", 100);
+                if (state == MpFtp.Result.Failed)
+                {
+                    // like the C# listing, what arrived before a timeout is the answer
+                    var ex = NativeError(ftp, "Failed to OpenFile - ", dir, false, true);
+                    if (ex != null)
+                        throw ex;
+                }
+
+                return answer;
+            }
+        }
+
+        private bool CommandNative(FTPOpcode opcode, string path, string path2, CancellationTokenSource cancel,
+            string errnoText, bool failThrows, bool notFoundThrows, out uint value)
+        {
+            log.Info("get " + opcode + " " + path + (path2 != null ? " to " + path2 : ""));
+            using (var ftp = NewNative())
+            {
+                var state = RunNative(ftp, () => ftp.Command((byte) opcode, path, path2), cancel);
+                value = ftp.Value;
+                if (state == MpFtp.Result.Done)
+                    return true;
+                var ex = NativeError(ftp, errnoText, path, failThrows, notFoundThrows);
+                if (ex != null)
+                    throw ex;
+                return false;
             }
         }
 
