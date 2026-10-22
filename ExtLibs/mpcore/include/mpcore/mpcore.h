@@ -61,6 +61,9 @@ extern "C" {
 /* mp_link_send() flags */
 #define MP_SEND_FORCE_MAVLINK2  0x0001u /* use MAVLink 2 even if the peer has only sent MAVLink 1 */
 
+/* The longest frame: 17 header bytes, 255 payload, 2 CRC, 13 signature. */
+#define MPCORE_MAX_FRAME_LEN    287
+
 typedef struct mp_link mp_link;
 
 typedef struct mp_frame {
@@ -146,10 +149,35 @@ typedef struct mp_msg_info {
     uint8_t reserved[3];
 } mp_msg_info;
 
+/* Everything mp_frame_encode() needs: the caller makes every decision, the core only encodes. */
+typedef struct mp_encode_args {
+    uint32_t struct_size;
+    uint32_t msgid;
+    uint32_t src_sysid;
+    uint32_t target_sysid;   /* > 255 with a target_system field: payload 255, TARGET32 header */
+    uint8_t src_compid;
+    uint8_t seq;
+    uint8_t mavlink1;        /* 1: MAVLink 1 framing, payload cut to the base length */
+    uint8_t sign;            /* 1: append a signature (MAVLink 2 only) */
+    uint8_t link_id;         /* signature link ID */
+    uint8_t reserved[11];    /* keeps timestamp at offset 32 on every ABI */
+    uint64_t timestamp;      /* signature timestamp, 10 us units since 2015-01-01 */
+    const uint8_t *key;      /* 32-byte signing key, required when sign is 1 */
+} mp_encode_args;
+
 MPCORE_API uint32_t MPCORE_CALL mp_abi_version(void);
 MPCORE_API const char *MPCORE_CALL mp_version_string(void);
 
 MPCORE_API int MPCORE_CALL mp_msg_info_get(uint32_t msgid, mp_msg_info *out);
+
+/*
+ * Encodes one frame without any link state. payload is the message struct in wire order, up to the
+ * message's maximum length (shorter is zero-extended); MAVLink 2 payloads are zero-trimmed. Writes
+ * the frame to out (MPCORE_MAX_FRAME_LEN bytes always suffice) and returns its length, or a
+ * negative MP_ERR_*.
+ */
+MPCORE_API int MPCORE_CALL mp_frame_encode(const mp_encode_args *args, const void *payload,
+                                           size_t payload_len, uint8_t *out, size_t out_capacity);
 
 MPCORE_API void MPCORE_CALL mp_link_config_init(mp_link_config *config);
 /* Returns NULL on bad arguments. callbacks may be NULL and set later. */

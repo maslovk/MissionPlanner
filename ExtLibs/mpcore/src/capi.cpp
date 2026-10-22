@@ -1,5 +1,6 @@
 // The exported C ABI: thin, exception-free wrappers over mpcore::Link.
 
+#include <cstddef>
 #include <cstring>
 #include <new>
 
@@ -12,6 +13,11 @@ struct mp_link {
     mpcore::Link link;
     mp_link_callbacks callbacks{};
 };
+
+// Layouts the C# binding relies on (MissionPlanner.Mavlink.Native)
+static_assert(offsetof(mp_encode_args, timestamp) == 32, "mp_encode_args.timestamp moved");
+static_assert(offsetof(mp_encode_args, key) == 40, "mp_encode_args.key moved");
+static_assert(MPCORE_MAX_FRAME_LEN == mpcore::kMaxFrameLen, "MPCORE_MAX_FRAME_LEN is wrong");
 
 namespace {
 
@@ -90,6 +96,32 @@ MPCORE_API int MPCORE_CALL mp_msg_info_get(uint32_t msgid, mp_msg_info *out) {
     m.target_system_ofs = info->target_system_ofs;
     m.target_component_ofs = info->target_component_ofs;
     return copy_out(m, out);
+}
+
+MPCORE_API int MPCORE_CALL mp_frame_encode(const mp_encode_args *args, const void *payload,
+                                           size_t payload_len, uint8_t *out, size_t out_capacity) {
+    mp_encode_args a{};
+    if (!copy_in(args, a) || out == nullptr)
+        return MP_ERR_ARGUMENT;
+    mpcore::SigningKey key{};
+    mpcore::EncodeRequest req;
+    req.msgid = a.msgid;
+    req.payload = static_cast<const uint8_t *>(payload);
+    req.payload_len = payload_len;
+    req.src_sysid = a.src_sysid;
+    req.src_compid = a.src_compid;
+    req.target_sysid = a.target_sysid;
+    req.seq = a.seq;
+    req.mavlink1 = a.mavlink1 != 0;
+    if (a.sign != 0 && a.mavlink1 == 0) {
+        if (a.key == nullptr)
+            return MP_ERR_ARGUMENT;
+        std::memcpy(key.data(), a.key, key.size());
+        req.key = &key;
+        req.link_id = a.link_id;
+        req.timestamp = a.timestamp;
+    }
+    return mpcore::encode(req, out, out_capacity);
 }
 
 MPCORE_API void MPCORE_CALL mp_link_config_init(mp_link_config *config) {

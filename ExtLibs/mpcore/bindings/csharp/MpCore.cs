@@ -32,6 +32,7 @@ namespace MissionPlanner.Mavlink.Native
         }
 
         public const uint MP_SEND_FORCE_MAVLINK2 = 0x0001;
+        public const int MPCORE_MAX_FRAME_LEN = 287;
 
         [StructLayout(LayoutKind.Sequential)]
         public struct mp_frame
@@ -135,6 +136,24 @@ namespace MissionPlanner.Mavlink.Native
             public byte reserved2;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        public struct mp_encode_args
+        {
+            public uint struct_size;
+            public uint msgid;
+            public uint src_sysid;
+            public uint target_sysid;
+            public byte src_compid;
+            public byte seq;
+            public byte mavlink1;
+            public byte sign;
+            public byte link_id;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 11)]
+            public byte[] reserved;
+            public ulong timestamp;
+            public IntPtr key;
+        }
+
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern uint mp_abi_version();
 
@@ -143,6 +162,10 @@ namespace MissionPlanner.Mavlink.Native
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern int mp_msg_info_get(uint msgid, ref mp_msg_info info);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_frame_encode(ref mp_encode_args args, byte[] payload, UIntPtr payload_len,
+            byte[] output, UIntPtr output_capacity);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern void mp_link_config_init(ref mp_link_config config);
@@ -183,6 +206,61 @@ namespace MissionPlanner.Mavlink.Native
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern int mp_link_stats_get(IntPtr link, ref mp_link_stats stats);
+    }
+
+    /// <summary>Encodes single frames with no link state: the caller makes every decision.</summary>
+    public static class MpFrameEncoder
+    {
+        /// <summary>
+        /// Returns the frame, or null with the negative MpCoreNative.MP_ERR_* in error. key (32 bytes)
+        /// signs a MAVLink 2 frame when not null.
+        /// </summary>
+        public static byte[] Encode(uint msgId, byte[] payload, uint srcSysId, byte srcCompId, uint targetSysId,
+            byte seq, bool mavlink1, byte[] key, byte linkId, ulong timestamp, out int error)
+        {
+            if (key != null && key.Length != 32)
+                throw new ArgumentException("signing keys are 32 bytes", nameof(key));
+            var args = new MpCoreNative.mp_encode_args
+            {
+                struct_size = (uint)Marshal.SizeOf(typeof(MpCoreNative.mp_encode_args)),
+                msgid = msgId,
+                src_sysid = srcSysId,
+                src_compid = srcCompId,
+                target_sysid = targetSysId,
+                seq = seq,
+                mavlink1 = (byte)(mavlink1 ? 1 : 0),
+                sign = (byte)(key != null ? 1 : 0),
+                link_id = linkId,
+                reserved = new byte[11],
+                timestamp = timestamp,
+            };
+            var output = new byte[MpCoreNative.MPCORE_MAX_FRAME_LEN];
+            int length = payload == null ? 0 : payload.Length;
+            var pinned = key != null ? GCHandle.Alloc(key, GCHandleType.Pinned) : default(GCHandle);
+            int n;
+            try
+            {
+                if (key != null)
+                    args.key = pinned.AddrOfPinnedObject();
+                n = MpCoreNative.mp_frame_encode(ref args, length == 0 ? null : payload, (UIntPtr)length, output,
+                    (UIntPtr)output.Length);
+            }
+            finally
+            {
+                if (key != null)
+                    pinned.Free();
+            }
+
+            if (n < 0)
+            {
+                error = n;
+                return null;
+            }
+
+            error = 0;
+            Array.Resize(ref output, n);
+            return output;
+        }
     }
 
     /// <summary>A received frame, copied out of native memory.</summary>

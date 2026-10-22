@@ -22,6 +22,7 @@ add_test(NAME mpcore_capi_test COMMAND mpcore_capi_test)
 #  - MpCoreSmoke: the P/Invoke binding (struct layouts, callbacks, signing);
 #  - MpCoreShadowParity: Mission Planner's own C# parser and the shadow comparer that
 #    MAVLinkInterface uses, on a recorded flight, clean and with line noise;
+#  - MpCoreEncoderParity: every message encoded by the C# encoder and by the core (mpcore_send);
 #  - MpCoreReceiverTest: the receiver behind the mpcore_receive setting, on a fake port.
 set(MPCORE_CSHARP_COMPILER "" CACHE FILEPATH "C# compiler for the C# tests (optional)")
 set(MPCORE_CSHARP_SERIALIZATION_REF "System.Runtime.Serialization.dll" CACHE STRING
@@ -97,6 +98,11 @@ if(MPCORE_CSHARP_COMPILER)
             OPTIONS "-r:${mavlink_dll}"
             DEPENDS "${mavlink_dll}"
             ARGS "${tlog}")
+        # every message of the C# dialect, encoded by the C# encoder and by the core
+        mpcore_csharp_test(MpCoreEncoderParity
+            SOURCES "${binding}" "${PROJECT_SOURCE_DIR}/bindings/csharp/MpCoreEncoderParity.cs"
+            OPTIONS "-r:${mavlink_dll}"
+            DEPENDS "${mavlink_dll}")
         # the receiver that replaces readPacketAsync's byte loop, against a fake port
         mpcore_csharp_test(MpCoreReceiverTest
             SOURCES "${binding}" ${mavlink_glue} "${mavlink_glue_dir}/MpCoreReceiver.cs"

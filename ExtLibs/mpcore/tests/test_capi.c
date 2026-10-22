@@ -164,10 +164,69 @@ static void test_errors(void) {
     mp_link_destroy(l);
 }
 
+static void test_frame_encode(void) {
+    static const uint8_t heartbeat[9] = {0, 0, 0, 0, 2, 3, 81, 4, 3};
+    static uint8_t key[32];
+    uint8_t command[33];
+    uint8_t frame[MPCORE_MAX_FRAME_LEN];
+    mp_encode_args args;
+    capture c;
+    mp_link *gcs;
+    int n;
+
+    memset(&args, 0, sizeof(args));
+    args.struct_size = sizeof(args);
+    args.msgid = 0;
+    args.src_sysid = 1;
+    args.src_compid = 1;
+    args.seq = 7;
+    args.mavlink1 = 1;
+    n = mp_frame_encode(&args, heartbeat, sizeof(heartbeat), frame, sizeof(frame));
+    CHECK(n == 6 + 9 + 2 && frame[0] == 0xFE && frame[2] == 7 && frame[3] == 1);
+
+    memset(&c, 0, sizeof(c));
+    gcs = make_link(255, 190, &c);
+    CHECK(mp_link_feed(gcs, frame, (size_t)n, 0) == 1 && c.last_sysid == 1);
+
+    /* MAVLink 2, signed, to a 32-bit system: the receiving link verifies it with the same key */
+    memset(key, 9, sizeof(key));
+    memset(command, 0, sizeof(command));
+    command[28] = 44; command[29] = 1; command[31] = 1; command[32] = 1;
+    args.msgid = 76;
+    args.mavlink1 = 0;
+    args.target_sysid = 0x80000001u;
+    args.sign = 1;
+    args.key = key;
+    args.link_id = 3;
+    args.timestamp = 12345;
+    n = mp_frame_encode(&args, command, sizeof(command), frame, sizeof(frame));
+    CHECK(n == 14 + 33 + 2 + 13 && frame[0] == 0xFD && frame[2] == 0x05);
+    CHECK(frame[14 + 30] == 255); /* payload target: the sentinel */
+    mp_link_add_signing_key(gcs, key);
+    c.frames = 0;
+    CHECK(mp_link_feed(gcs, frame, (size_t)n, 0) == 1);
+    CHECK(c.last_msgid == 76 && (c.last_flags & MP_FRAME_SIGNATURE_OK) && (c.last_flags & MP_FRAME_NOT_FOR_US));
+    mp_link_destroy(gcs);
+
+    /* errors */
+    args.key = NULL;
+    CHECK(mp_frame_encode(&args, command, sizeof(command), frame, sizeof(frame)) == MP_ERR_ARGUMENT);
+    args.sign = 0;
+    args.mavlink1 = 1;
+    CHECK(mp_frame_encode(&args, command, sizeof(command), frame, sizeof(frame)) == MP_ERR_UNREPRESENTABLE);
+    args.mavlink1 = 0;
+    CHECK(mp_frame_encode(&args, command, sizeof(command), frame, 10) == MP_ERR_ARGUMENT);
+    CHECK(mp_frame_encode(&args, command, sizeof(command), NULL, 0) == MP_ERR_ARGUMENT);
+    args.struct_size = sizeof(args) + 8;
+    CHECK(mp_frame_encode(&args, command, sizeof(command), frame, sizeof(frame)) == MP_ERR_ARGUMENT);
+    CHECK(mp_frame_encode(NULL, command, sizeof(command), frame, sizeof(frame)) == MP_ERR_ARGUMENT);
+}
+
 int main(void) {
     test_version_and_messages();
     test_round_trip();
     test_errors();
+    test_frame_encode();
     printf("%s (%d failed checks)\n", failures == 0 ? "ok" : "FAIL", failures);
     return failures == 0 ? 0 : 1;
 }

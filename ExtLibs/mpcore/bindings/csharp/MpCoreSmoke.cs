@@ -149,9 +149,44 @@ static class MpCoreSmoke
         }
     }
 
+    // mp_encode_args crosses P/Invoke intact: the key pointer and the 64-bit timestamp after the
+    // padding arrive, so a receiving link verifies the signature and reads the timestamp back.
+    static void Encoder()
+    {
+        var key = new byte[32];
+        for (int i = 0; i < key.Length; i++)
+            key[i] = (byte)(255 - i);
+        const ulong timestamp = 0x0000123456789AUL;
+        int error;
+        var frame = MpFrameEncoder.Encode(0, Heartbeat, 0x80000005, 1, 255, 9, false, key, 7, timestamp, out error);
+        Check(frame != null && error == 0, "MpFrameEncoder.Encode: " + error);
+        if (frame == null)
+            return;
+        Check(frame[0] == 0xFD && frame[2] == 0x03 && frame[4] == 9, "signed, 32-bit source, seq");
+        ulong ts = 0;
+        for (int i = 5; i >= 0; i--)
+            ts = (ts << 8) | frame[frame.Length - 12 + i];
+        Check(ts == timestamp && frame[frame.Length - 13] == 7, "timestamp and link id");
+        using (var gcs = new MpLink())
+        {
+            MpFrame got = null;
+            gcs.FrameReceived += f => got = f;
+            gcs.AddSigningKey(key);
+            gcs.Feed(frame, 0, frame.Length, 0);
+            Check(got != null && (got.Flags & MpCoreNative.FrameFlags.SignatureOk) != 0 && got.SysId == 0x80000005,
+                "the receiving link verifies it");
+        }
+
+        Check(MpFrameEncoder.Encode(0xFFFFFF, null, 1, 1, 0, 0, false, null, 0, 0, out error) == null &&
+              error == MpCoreNative.MP_ERR_UNKNOWN_MSG, "unknown message");
+        Check(MpFrameEncoder.Encode(0, Heartbeat, 0x80000005, 1, 0, 0, true, null, 0, 0, out error) == null &&
+              error == MpCoreNative.MP_ERR_UNREPRESENTABLE, "no 32-bit source in MAVLink 1");
+    }
+
     static int Main()
     {
         Layouts();
+        Encoder();
         RoundTrip();
         Signing();
         Console.WriteLine((failures == 0 ? "ok" : "FAIL") + " (" + failures + " failed checks, " + IntPtr.Size * 8 + "-bit)");
