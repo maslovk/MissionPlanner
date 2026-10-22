@@ -266,6 +266,34 @@ namespace MissionPlanner.Mavlink.Native
         public static extern int mp_mission_download_item(IntPtr download, UIntPtr index, byte[] output, UIntPtr capacity);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern IntPtr mp_mission_upload_create(uint sysid, byte compid, uint gcs_sysid, byte gcs_compid,
+            byte mission_type, mp_message_fn send, IntPtr user);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mp_mission_upload_destroy(IntPtr upload);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_mission_upload_add(IntPtr upload, uint msgid, byte[] payload, UIntPtr len);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_mission_upload_start(IntPtr upload, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_mission_upload_frame(IntPtr upload, byte[] frame, UIntPtr len, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_mission_upload_tick(IntPtr upload, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_mission_upload_result(IntPtr upload);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_mission_upload_count_accepted(IntPtr upload);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_mission_upload_highest_requested(IntPtr upload);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern uint mp_abi_version();
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
@@ -711,6 +739,112 @@ namespace MissionPlanner.Mavlink.Native
                 if (_download != IntPtr.Zero)
                     MpCoreNative.mp_mission_download_destroy(_download);
                 _download = IntPtr.Zero;
+            }
+
+            GC.KeepAlive(_onSend);
+        }
+    }
+
+    /// <summary>
+    /// A mission, fence or rally list upload (see mp_mission_upload in mpcore.h). Thread-safe like
+    /// MpParamDownload. Add the items, then Start.
+    /// </summary>
+    public sealed class MpMissionUpload : IDisposable
+    {
+        readonly object _sync = new object();
+        readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        readonly MpCoreNative.mp_message_fn _onSend;
+        readonly Action<uint, byte[]> _send;
+        IntPtr _upload;
+
+        public MpMissionUpload(uint sysId, byte compId, uint gcsSysId, byte gcsCompId, byte missionType,
+            Action<uint, byte[]> send)
+        {
+            _send = send;
+            _onSend = OnSend;
+            _upload = MpCoreNative.mp_mission_upload_create(sysId, compId, gcsSysId, gcsCompId, missionType, _onSend,
+                IntPtr.Zero);
+            if (_upload == IntPtr.Zero)
+                throw new InvalidOperationException("mp_mission_upload_create failed");
+        }
+
+        long NowUs => _clock.Elapsed.Ticks / (TimeSpan.TicksPerMillisecond / 1000);
+
+        /// <summary>An item: MISSION_ITEM_INT or MISSION_ITEM payload with its seq, target and type set.</summary>
+        public void Add(uint msgId, byte[] payload)
+        {
+            lock (_sync)
+                if (_upload == IntPtr.Zero ||
+                    MpCoreNative.mp_mission_upload_add(_upload, msgId, payload, (UIntPtr)payload.Length) != MpCoreNative.MP_OK)
+                    throw new InvalidOperationException("items are added before Start");
+        }
+
+        public void Start()
+        {
+            lock (_sync)
+                if (_upload != IntPtr.Zero)
+                    MpCoreNative.mp_mission_upload_start(_upload, NowUs);
+        }
+
+        public void Frame(byte[] frame)
+        {
+            if (frame == null || frame.Length == 0)
+                return;
+            lock (_sync)
+                if (_upload != IntPtr.Zero)
+                    MpCoreNative.mp_mission_upload_frame(_upload, frame, (UIntPtr)frame.Length, NowUs);
+        }
+
+        public MpMissionDownload.Result Tick()
+        {
+            lock (_sync)
+                return _upload == IntPtr.Zero
+                    ? MpMissionDownload.Result.Failed
+                    : (MpMissionDownload.Result)MpCoreNative.mp_mission_upload_tick(_upload, NowUs);
+        }
+
+        /// <summary>The vehicle's MISSION_ACK result (MAV_MISSION_RESULT), or -1 without one.</summary>
+        public int Result
+        {
+            get
+            {
+                lock (_sync)
+                    return _upload == IntPtr.Zero ? -1 : MpCoreNative.mp_mission_upload_result(_upload);
+            }
+        }
+
+        public bool CountAccepted
+        {
+            get
+            {
+                lock (_sync)
+                    return _upload != IntPtr.Zero && MpCoreNative.mp_mission_upload_count_accepted(_upload) == 1;
+            }
+        }
+
+        public int HighestRequested
+        {
+            get
+            {
+                lock (_sync)
+                    return _upload == IntPtr.Zero ? -1 : MpCoreNative.mp_mission_upload_highest_requested(_upload);
+            }
+        }
+
+        void OnSend(IntPtr user, uint msgid, IntPtr payload, UIntPtr len)
+        {
+            var bytes = new byte[(int)len];
+            Marshal.Copy(payload, bytes, 0, bytes.Length);
+            try { _send?.Invoke(msgid, bytes); } catch (Exception ex) { Console.Error.WriteLine("mpcore mission Send: " + ex); }
+        }
+
+        public void Dispose()
+        {
+            lock (_sync)
+            {
+                if (_upload != IntPtr.Zero)
+                    MpCoreNative.mp_mission_upload_destroy(_upload);
+                _upload = IntPtr.Zero;
             }
 
             GC.KeepAlive(_onSend);

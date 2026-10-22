@@ -281,6 +281,30 @@ static class MpCoreSmoke
         }
     }
 
+    // the mission upload through the binding: count, the item asked for, the ACK's result
+    static void Upload()
+    {
+        var sent = new List<uint>();
+        var payloads = new List<byte[]>();
+        using (var upload = new MpMissionUpload(1, 1, 255, 190, 0, (msgid, payload) => { sent.Add(msgid); payloads.Add(payload); }))
+        {
+            for (byte seq = 0; seq < 2; seq++)
+            {
+                var item = new byte[38];
+                item[28] = seq;
+                upload.Add(73, item);
+            }
+
+            upload.Start();
+            Check(sent.Count == 1 && sent[0] == 44 && payloads[0][0] == 2, "MISSION_COUNT 2");
+            upload.Frame(Encode(51, new byte[] { 1, 0, 255, 190, 0 }));
+            Check(sent.Count == 2 && sent[1] == 73 && payloads[1][28] == 1, "item 1 when asked for");
+            Check(upload.CountAccepted && upload.HighestRequested == 1, "count taken");
+            upload.Frame(Encode(47, new byte[] { 255, 190, 4, 0 }));
+            Check(upload.Tick() == MpMissionDownload.Result.Done && upload.Result == 4, "the ACK's result (NO_SPACE)");
+        }
+    }
+
     static int Main()
     {
         Layouts();
@@ -288,6 +312,7 @@ static class MpCoreSmoke
         Params();
         Exchange();
         Missions();
+        Upload();
         RoundTrip();
         Signing();
         Console.WriteLine((failures == 0 ? "ok" : "FAIL") + " (" + failures + " failed checks, " + IntPtr.Size * 8 + "-bit)");

@@ -334,6 +334,33 @@ MPCORE_API size_t MPCORE_CALL mp_mission_download_received(mp_mission_download *
 MPCORE_API int MPCORE_CALL mp_mission_download_item(mp_mission_download *download, size_t index, uint8_t *out,
                                                     size_t capacity);
 
+/*
+ * Mission, fence or rally list upload: MISSION_COUNT, then each MISSION_REQUEST(_INT) answered with
+ * the item it asks for, until the vehicle's MISSION_ACK (its result is the outcome). 700 ms and 3
+ * resends for the count, 450 ms and 10 for an item. Add the items (MISSION_ITEM_INT or MISSION_ITEM
+ * payloads with their seq, target and mission type set) before mp_mission_upload_start. Ticks
+ * return MP_MISSION_*.
+ */
+typedef struct mp_mission_upload mp_mission_upload;
+
+MPCORE_API mp_mission_upload *MPCORE_CALL mp_mission_upload_create(uint32_t sysid, uint8_t compid,
+                                                                    uint32_t gcs_sysid, uint8_t gcs_compid,
+                                                                    uint8_t mission_type, mp_message_fn send,
+                                                                    void *user);
+MPCORE_API void MPCORE_CALL mp_mission_upload_destroy(mp_mission_upload *upload);
+MPCORE_API int MPCORE_CALL mp_mission_upload_add(mp_mission_upload *upload, uint32_t msgid, const void *payload,
+                                                 size_t len);
+MPCORE_API int MPCORE_CALL mp_mission_upload_start(mp_mission_upload *upload, int64_t now_us);
+MPCORE_API int MPCORE_CALL mp_mission_upload_frame(mp_mission_upload *upload, const uint8_t *frame, size_t len,
+                                                   int64_t now_us);
+MPCORE_API int MPCORE_CALL mp_mission_upload_tick(mp_mission_upload *upload, int64_t now_us);
+/* The vehicle's MISSION_ACK result (MAV_MISSION_RESULT), or -1 without one. */
+MPCORE_API int MPCORE_CALL mp_mission_upload_result(mp_mission_upload *upload);
+/* 1 once the vehicle asked for an item or answered the count. */
+MPCORE_API int MPCORE_CALL mp_mission_upload_count_accepted(mp_mission_upload *upload);
+/* The highest seq the vehicle asked for, -1 before any. */
+MPCORE_API int MPCORE_CALL mp_mission_upload_highest_requested(mp_mission_upload *upload);
+
 #ifdef __cplusplus
 }
 #endif

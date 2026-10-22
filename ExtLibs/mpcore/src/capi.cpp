@@ -2,11 +2,13 @@
 
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <new>
 
 #include "exchange.hpp"
 #include "link.hpp"
 #include "mission_download.hpp"
+#include "mission_upload.hpp"
 #include "mpcore/mpcore.h"
 #include "param_download.hpp"
 #include "protocol.hpp"
@@ -35,6 +37,15 @@ struct mp_mission_download {
                            send(user, msgid, payload, len);
                    }) {}
     mpcore::MissionDownload download;
+};
+
+struct mp_mission_upload {
+    uint32_t sysid, gcs_sysid;
+    uint8_t compid, gcs_compid, type;
+    mp_message_fn send;
+    void *user;
+    std::vector<mpcore::MissionUpload::Item> items;  // until started
+    std::unique_ptr<mpcore::MissionUpload> upload;
 };
 
 struct mp_param_download {
@@ -525,6 +536,100 @@ MPCORE_API int MPCORE_CALL mp_mission_download_item(mp_mission_download *downloa
         return MP_ERR_ARGUMENT;
     std::memcpy(out, item.data(), item.size());
     return static_cast<int>(item.size());
+}
+
+MPCORE_API mp_mission_upload *MPCORE_CALL mp_mission_upload_create(uint32_t sysid, uint8_t compid,
+                                                                    uint32_t gcs_sysid, uint8_t gcs_compid,
+                                                                    uint8_t mission_type, mp_message_fn send,
+                                                                    void *user) {
+    auto *u = new (std::nothrow) mp_mission_upload{};
+    if (u == nullptr)
+        return nullptr;
+    u->sysid = sysid;
+    u->compid = compid;
+    u->gcs_sysid = gcs_sysid;
+    u->gcs_compid = gcs_compid;
+    u->type = mission_type;
+    u->send = send;
+    u->user = user;
+    return u;
+}
+
+MPCORE_API void MPCORE_CALL mp_mission_upload_destroy(mp_mission_upload *upload) {
+    delete upload;
+}
+
+MPCORE_API int MPCORE_CALL mp_mission_upload_add(mp_mission_upload *upload, uint32_t msgid, const void *payload,
+                                                 size_t len) {
+    if (upload == nullptr || upload->upload || (payload == nullptr && len != 0))
+        return MP_ERR_ARGUMENT;
+    try {
+        const auto *p = static_cast<const uint8_t *>(payload);
+        upload->items.push_back({msgid, std::vector<uint8_t>(p, p + len)});
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+    return MP_OK;
+}
+
+MPCORE_API int MPCORE_CALL mp_mission_upload_start(mp_mission_upload *upload, int64_t now_us) {
+    if (upload == nullptr || upload->upload)
+        return MP_ERR_ARGUMENT;
+    try {
+        mp_message_fn send = upload->send;
+        void *user = upload->user;
+        upload->upload = std::make_unique<mpcore::MissionUpload>(
+            upload->sysid, upload->compid, upload->gcs_sysid, upload->gcs_compid, upload->type,
+            std::move(upload->items), [send, user](uint32_t msgid, const uint8_t *payload, std::size_t len) {
+                if (send)
+                    send(user, msgid, payload, len);
+            });
+        upload->upload->start(now_us);
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+    return MP_OK;
+}
+
+MPCORE_API int MPCORE_CALL mp_mission_upload_frame(mp_mission_upload *upload, const uint8_t *frame, size_t len,
+                                                   int64_t now_us) {
+    if (upload == nullptr || !upload->upload || frame == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        upload->upload->on_frame(frame, len, now_us);
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+    return MP_OK;
+}
+
+MPCORE_API int MPCORE_CALL mp_mission_upload_tick(mp_mission_upload *upload, int64_t now_us) {
+    if (upload == nullptr || !upload->upload)
+        return MP_ERR_ARGUMENT;
+    try {
+        switch (upload->upload->tick(now_us)) {
+        case mpcore::MissionUpload::State::Done:
+            return MP_MISSION_DONE;
+        case mpcore::MissionUpload::State::Failed:
+            return MP_MISSION_FAILED;
+        default:
+            return MP_MISSION_RUNNING;
+        }
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+}
+
+MPCORE_API int MPCORE_CALL mp_mission_upload_result(mp_mission_upload *upload) {
+    return upload == nullptr || !upload->upload ? -1 : upload->upload->result();
+}
+
+MPCORE_API int MPCORE_CALL mp_mission_upload_count_accepted(mp_mission_upload *upload) {
+    return upload != nullptr && upload->upload && upload->upload->count_accepted() ? 1 : 0;
+}
+
+MPCORE_API int MPCORE_CALL mp_mission_upload_highest_requested(mp_mission_upload *upload) {
+    return upload == nullptr || !upload->upload ? -1 : upload->upload->highest_requested();
 }
 
 }  // extern "C"
