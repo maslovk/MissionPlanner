@@ -8,9 +8,11 @@ add_executable(mpcore_tests
     test_link.cpp
     test_mission.cpp
     test_params.cpp
+    test_vehicle_state.cpp
 )
 target_include_directories(mpcore_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
-target_link_libraries(mpcore_tests PRIVATE mpcore_core)
+# the generated MAVLink structs, to build test messages with
+target_link_libraries(mpcore_tests PRIVATE mpcore_core mpcore_mavlink)
 mpcore_set_warnings(mpcore_tests)
 add_test(NAME mpcore_tests COMMAND mpcore_tests)
 

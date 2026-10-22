@@ -370,6 +370,30 @@ static class MpCoreSmoke
         }
     }
 
+    // the vehicle state through the binding: its size (the native side checks every offset) and a
+    // decode
+    static void Vehicle()
+    {
+        Check(Marshal.SizeOf(typeof(MpCoreNative.mp_vehicle_state)) == 872, "mp_vehicle_state size " +
+              Marshal.SizeOf(typeof(MpCoreNative.mp_vehicle_state)));
+        using (var vehicle = new MpVehicle(1, 1))
+        {
+            var attitude = new byte[28];
+            BitConverter.GetBytes(0.5f).CopyTo(attitude, 4);  // roll
+            BitConverter.GetBytes(-0.5f).CopyTo(attitude, 12); // yaw
+            Check(vehicle.Frame(Encode(30, attitude)), "ATTITUDE taken");
+            var rc = new byte[42];
+            BitConverter.GetBytes((ushort)1234).CopyTo(rc, 4);  // chan1
+            BitConverter.GetBytes((ushort)1999).CopyTo(rc, 34); // chan16
+            rc[41] = 127;
+            Check(vehicle.Frame(Encode(65, rc)), "RC_CHANNELS taken");
+            var s = vehicle.State();
+            Check(s.messages == 2 && Math.Abs(s.roll - 28.6479f) < 1e-3 && Math.Abs(s.yaw - 331.3521f) < 1e-3, "attitude");
+            Check(s.rc_in[0] == 1234 && s.rc_in[15] == 1999 && s.rxrssi == 50, "rc in, the last of the 2-byte fields");
+            Check(s.reserved.Length == 10, "the 1-byte fields");
+        }
+    }
+
     static int Main()
     {
         Layouts();
@@ -379,6 +403,7 @@ static class MpCoreSmoke
         Missions();
         Upload();
         Ftp();
+        Vehicle();
         RoundTrip();
         Signing();
         Console.WriteLine((failures == 0 ? "ok" : "FAIL") + " (" + failures + " failed checks, " + IntPtr.Size * 8 + "-bit)");

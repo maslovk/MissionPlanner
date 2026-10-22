@@ -396,6 +396,61 @@ namespace MissionPlanner.Mavlink.Native
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern void mp_ftp_set_plain_listing(IntPtr ftp, int plain);
 
+        public const int MP_VEHICLE_BATTERIES = 9;
+
+        /// <summary>mp_vehicle_state, field for field (8-, 4-, 2- then 1-byte fields).</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct mp_vehicle_state
+        {
+            public uint struct_size;
+            public uint messages;
+            public double lat, lng;
+            public double vx, vy, vz;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = MP_VEHICLE_BATTERIES)] public double[] battery_voltage;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = MP_VEHICLE_BATTERIES)] public double[] battery_current;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = MP_VEHICLE_BATTERIES)] public double[] battery_used_mah;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = MP_VEHICLE_BATTERIES)] public double[] battery_temp;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 14)] public double[] battery_cells;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = MP_VEHICLE_BATTERIES)] public float[] battery_remain_min;
+            public float roll, pitch, yaw;
+            public float alt, altasl;
+            public float groundspeed, groundcourse, airspeed, climbrate, throttle;
+            public float gps_hdop, satcount, gps_h_acc, gps_v_acc, gps_vel_acc, gps_hdg_acc, gps_yaw;
+            public float load;
+            public float nav_roll, nav_pitch, nav_bearing, target_bearing, wp_dist, alt_error, aspd_error, xtrack_error;
+            public float vibe_x, vibe_y, vibe_z;
+            public float ekf_status, ekf_velv, ekf_compv, ekf_poshor, ekf_posvert, ekf_teralt;
+            public float press_abs, press_temp, airspeed1_temp;
+            public float ter_curalt, ter_alt;
+            public uint custom_mode;
+            public uint sensors_present, sensors_enabled, sensors_health;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)] public uint[] errors_count;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)] public uint[] vibe_clip;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = MP_VEHICLE_BATTERIES)] public int[] battery_remaining;
+            public int rxrssi;
+            public int ekf_flags;
+            public ushort wpno, drop_rate_comm, rxerrors, @fixed;
+            public ushort ter_load, ter_pend, ter_space;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public ushort[] rc_in;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)] public ushort[] servo_out;
+            public byte heartbeat_seen, type, autopilot, base_mode, system_status, armed, landed, failsafe;
+            public byte custom_mode_seen, sensors_seen, vtol_state, landed_state, gps_fix_type, use_location, got_vfr;
+            public byte rssi, remrssi, txbuf, noise, remnoise;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 10)] public byte[] reserved;
+        }
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern IntPtr mp_vehicle_create(uint sysid, byte compid);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mp_vehicle_destroy(IntPtr vehicle);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_vehicle_frame(IntPtr vehicle, byte[] frame, UIntPtr len, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_vehicle_state_get(IntPtr vehicle, ref mp_vehicle_state state);
+
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern uint mp_abi_version();
 
@@ -1356,6 +1411,59 @@ namespace MissionPlanner.Mavlink.Native
             }
 
             GC.KeepAlive(_onSend);
+        }
+    }
+
+    /// <summary>
+    /// One vehicle's telemetry decoded by the core (see mp_vehicle in mpcore.h). Thread-safe:
+    /// frames and reads may come from different threads.
+    /// </summary>
+    public sealed class MpVehicle : IDisposable
+    {
+        readonly object _sync = new object();
+        readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        IntPtr _vehicle;
+
+        public MpVehicle(uint sysId, byte compId)
+        {
+            _vehicle = MpCoreNative.mp_vehicle_create(sysId, compId);
+            if (_vehicle == IntPtr.Zero)
+                throw new InvalidOperationException("mp_vehicle_create failed");
+        }
+
+        long NowUs => _clock.Elapsed.Ticks / (TimeSpan.TicksPerMillisecond / 1000);
+
+        /// <summary>Any frame of the link; true if it changed the state. nowUs: the clock for the mAh
+        /// integration, the wall clock when null.</summary>
+        public bool Frame(byte[] frame, long? nowUs = null)
+        {
+            if (frame == null || frame.Length == 0)
+                return false;
+            lock (_sync)
+                return _vehicle != IntPtr.Zero &&
+                       MpCoreNative.mp_vehicle_frame(_vehicle, frame, (UIntPtr)frame.Length, nowUs ?? NowUs) == 1;
+        }
+
+        public MpCoreNative.mp_vehicle_state State()
+        {
+            var state = new MpCoreNative.mp_vehicle_state
+            {
+                struct_size = (uint)Marshal.SizeOf(typeof(MpCoreNative.mp_vehicle_state))
+            };
+            lock (_sync)
+                if (_vehicle == IntPtr.Zero || MpCoreNative.mp_vehicle_state_get(_vehicle, ref state) != MpCoreNative.MP_OK)
+                    throw new InvalidOperationException("mp_vehicle_state_get failed");
+            return state;
+        }
+
+        public void Dispose()
+        {
+            lock (_sync)
+            {
+                if (_vehicle != IntPtr.Zero)
+                    MpCoreNative.mp_vehicle_destroy(_vehicle);
+                _vehicle = IntPtr.Zero;
+            }
         }
     }
 }

@@ -467,6 +467,63 @@ MPCORE_API void MPCORE_CALL mp_ftp_set_plain_listing(mp_ftp *ftp, int plain);
 /* FILE_TRANSFER_PROTOCOL messages sent, resends included. */
 MPCORE_API uint32_t MPCORE_CALL mp_ftp_requests_sent(mp_ftp *ftp);
 
+/*
+ * One vehicle's telemetry, decoded as Mission Planner's CurrentState decodes it (the stored values,
+ * before display units). Feed it every frame of the link; frames of other vehicles are ignored
+ * (but RADIO/RADIO_STATUS, which are for everyone). Not thread-safe.
+ */
+typedef struct mp_vehicle mp_vehicle;
+
+#define MP_VEHICLE_BATTERIES 9
+
+/* Fields by size (8, 4, 2, 1 bytes), so the layout has no padding to get wrong. Grows at the end
+   of each size group only in a new ABI version; read it with mp_vehicle_state_get. */
+typedef struct mp_vehicle_state {
+    uint32_t struct_size; /* set to sizeof(mp_vehicle_state) */
+    uint32_t messages;    /* frames that changed the state */
+    double lat, lng;      /* deg: GLOBAL_POSITION_INT, else GPS_RAW_INT */
+    double vx, vy, vz;    /* m/s */
+    double battery_voltage[MP_VEHICLE_BATTERIES]; /* V, BATTERY_STATUS by id; [0] smoothed as CurrentState */
+    double battery_current[MP_VEHICLE_BATTERIES]; /* A; [0] also SYS_STATUS, [1] also BATTERY2 */
+    double battery_used_mah[MP_VEHICLE_BATTERIES];
+    double battery_temp[MP_VEHICLE_BATTERIES];    /* degC, kept while not reported */
+    double battery_cells[14];                      /* V, battery 0 */
+    float battery_remain_min[MP_VEHICLE_BATTERIES];
+    float roll, pitch, yaw;                        /* deg, yaw 0..360 */
+    float alt, altasl;                             /* m, relative to home and AMSL */
+    float groundspeed, groundcourse, airspeed, climbrate, throttle;
+    float gps_hdop, satcount, gps_h_acc, gps_v_acc, gps_vel_acc, gps_hdg_acc, gps_yaw;
+    float load;
+    float nav_roll, nav_pitch, nav_bearing, target_bearing, wp_dist, alt_error, aspd_error, xtrack_error;
+    float vibe_x, vibe_y, vibe_z;
+    float ekf_status, ekf_velv, ekf_compv, ekf_poshor, ekf_posvert, ekf_teralt;
+    float press_abs, press_temp, airspeed1_temp;
+    float ter_curalt, ter_alt;
+    uint32_t custom_mode;
+    uint32_t sensors_present, sensors_enabled, sensors_health;
+    uint32_t errors_count[4];
+    uint32_t vibe_clip[3];
+    int32_t battery_remaining[MP_VEHICLE_BATTERIES];
+    int32_t rxrssi;
+    int32_t ekf_flags;
+    uint16_t wpno, drop_rate_comm, rxerrors, fixed;
+    uint16_t ter_load, ter_pend, ter_space;
+    uint16_t rc_in[16];
+    uint16_t servo_out[32];
+    uint8_t heartbeat_seen, type, autopilot, base_mode, system_status, armed, landed, failsafe;
+    uint8_t custom_mode_seen, sensors_seen, vtol_state, landed_state, gps_fix_type, use_location, got_vfr;
+    uint8_t rssi, remrssi, txbuf, noise, remnoise;
+    uint8_t reserved[10]; /* to a multiple of 8: no tail padding */
+} mp_vehicle_state;
+
+MPCORE_API mp_vehicle *MPCORE_CALL mp_vehicle_create(uint32_t sysid, uint8_t compid);
+MPCORE_API void MPCORE_CALL mp_vehicle_destroy(mp_vehicle *vehicle);
+/* Any frame of the link. Returns 1 if it changed the state, 0 if not, or a negative MP_ERR_*.
+   now_us: the caller's clock (battery mAh is integrated from SYS_STATUS current as CurrentState does). */
+MPCORE_API int MPCORE_CALL mp_vehicle_frame(mp_vehicle *vehicle, const uint8_t *frame, size_t len, int64_t now_us);
+/* Copies the state; out->struct_size must be set. */
+MPCORE_API int MPCORE_CALL mp_vehicle_state_get(mp_vehicle *vehicle, mp_vehicle_state *out);
+
 #ifdef __cplusplus
 }
 #endif

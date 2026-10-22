@@ -53,6 +53,7 @@ add_library(mpcore_core STATIC
     src/param_download.cpp
     src/protocol.cpp
     src/seq_tracker.cpp
+    src/vehicle_state.cpp
 )
 add_library(mpcore::core ALIAS mpcore_core)
 target_include_directories(mpcore_core

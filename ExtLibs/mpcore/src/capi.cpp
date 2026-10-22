@@ -13,6 +13,7 @@
 #include "mpcore/mpcore.h"
 #include "param_download.hpp"
 #include "protocol.hpp"
+#include "vehicle_state.hpp"
 
 struct mp_link {
     explicit mp_link(const mpcore::LinkConfig &config) : link(config) {}
@@ -58,6 +59,11 @@ struct mp_ftp {
     mpcore::Ftp ftp;
 };
 
+struct mp_vehicle {
+    mp_vehicle(uint32_t sysid, uint8_t compid) : vehicle(sysid, compid) {}
+    mpcore::VehicleState vehicle;
+};
+
 struct mp_param_download {
     mp_param_download(uint32_t sysid, uint8_t compid, mp_message_fn send, mp_param_fn on_param, void *user)
         : download(
@@ -88,6 +94,13 @@ static_assert(offsetof(mp_encode_args, key) == 40, "mp_encode_args.key moved");
 static_assert(MPCORE_MAX_FRAME_LEN == mpcore::kMaxFrameLen, "MPCORE_MAX_FRAME_LEN is wrong");
 static_assert(sizeof(mp_ftp_entry) == 24 && offsetof(mp_ftp_entry, size) == 16, "mp_ftp_entry moved");
 static_assert(MP_FTP_MAX_DATA == mpcore::Ftp::kMaxData, "MP_FTP_MAX_DATA is wrong");
+// the C# binding mirrors mp_vehicle_state field for field; MpCoreSmoke checks these
+static_assert(offsetof(mp_vehicle_state, lat) == 8, "mp_vehicle_state.lat moved");
+static_assert(offsetof(mp_vehicle_state, battery_remain_min) == 8 + 5 * 8 + 4 * 9 * 8 + 14 * 8,
+              "mp_vehicle_state.battery_remain_min moved");
+static_assert(offsetof(mp_vehicle_state, reserved) + sizeof(((mp_vehicle_state *)nullptr)->reserved) ==
+                  sizeof(mp_vehicle_state) && sizeof(mp_vehicle_state) == 872,
+              "mp_vehicle_state has padding");
 static_assert(offsetof(mp_param, value) == 2 * sizeof(void *), "mp_param.value moved");
 
 namespace {
@@ -821,6 +834,27 @@ MPCORE_API void MPCORE_CALL mp_ftp_set_plain_listing(mp_ftp *ftp, int plain) {
 
 MPCORE_API uint32_t MPCORE_CALL mp_ftp_requests_sent(mp_ftp *ftp) {
     return ftp == nullptr ? 0 : ftp->ftp.requests_sent();
+}
+
+MPCORE_API mp_vehicle *MPCORE_CALL mp_vehicle_create(uint32_t sysid, uint8_t compid) {
+    return new (std::nothrow) mp_vehicle(sysid, compid);
+}
+
+MPCORE_API void MPCORE_CALL mp_vehicle_destroy(mp_vehicle *vehicle) {
+    delete vehicle;
+}
+
+MPCORE_API int MPCORE_CALL mp_vehicle_frame(mp_vehicle *vehicle, const uint8_t *frame, size_t len, int64_t now_us) {
+    if (vehicle == nullptr || frame == nullptr)
+        return MP_ERR_ARGUMENT;
+    return vehicle->vehicle.on_frame(frame, len, now_us) ? 1 : 0;
+}
+
+MPCORE_API int MPCORE_CALL mp_vehicle_state_get(mp_vehicle *vehicle, mp_vehicle_state *out) {
+    if (vehicle == nullptr || out == nullptr || out->struct_size < sizeof(mp_vehicle_state))
+        return MP_ERR_ARGUMENT;
+    *out = vehicle->vehicle.state();
+    return MP_OK;
 }
 
 }  // extern "C"
