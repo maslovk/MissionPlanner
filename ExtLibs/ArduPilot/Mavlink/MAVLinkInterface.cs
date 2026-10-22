@@ -1825,6 +1825,26 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
 
             int currentparamcount = MAVlist[sysid, compid].param.Count;
 
+            if (Settings.Instance.GetBoolean("mpcore_params", false) && MpCoreNativeLoader.Available("params", log.Info))
+            {
+                try
+                {
+                    log.InfoFormat("setParam '{0}' = '{1}' sysid {2} compid {3}", paramname, value, sysid, compid);
+                    var reply = await NativeExchangeAsync(MissionPlanner.Mavlink.Native.MpExchange.ParamSet(sysid, compid,
+                            paramname, req.param_value, req.param_type, (msgid, payload) => SendPayload(msgid, payload, sysid, compid)),
+                        sysid, compid, MAVLINK_MSG_ID.PARAM_VALUE).ConfigureAwait(false);
+                    if (reply == null)
+                        throw new TimeoutException("Timeout on read - setParam " + paramname);
+                    var par = reply.ToStructure<mavlink_param_value_t>();
+                    ApplySetParamReply(par, paramname, sysid, compid, param);
+                    return true;
+                }
+                finally
+                {
+                    giveComport = false;
+                }
+            }
+
             bool complete = false;
 
             var sub1 = SubscribeToPacketType(MAVLINK_MSG_ID.PARAM_VALUE, buffer =>
@@ -1849,22 +1869,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                         return true;
                     }
 
-                    if (MAVlist[sysid, compid].apname == MAV_AUTOPILOT.ARDUPILOTMEGA)
-                    {
-                        var offset = Marshal.OffsetOf(typeof(mavlink_param_value_t), "param_value");
-                        MAVlist[sysid, compid].param[st] = new MAVLinkParam(st, BitConverter.GetBytes(par.param_value),
-                            MAV_PARAM_TYPE.REAL32, (MAV_PARAM_TYPE) par.param_type, param.default_value);
-                    }
-                    else
-                    {
-                        var offset = Marshal.OffsetOf(typeof(mavlink_param_value_t), "param_value");
-                        MAVlist[sysid, compid].param[st] = new MAVLinkParam(st, BitConverter.GetBytes(par.param_value),
-                            (MAV_PARAM_TYPE) par.param_type, (MAV_PARAM_TYPE) par.param_type);
-                    }
-
-                    log.Info("setParam gotback " + st + " : " + MAVlist[sysid, compid].param[st]);
-
-                    lastparamset = DateTime.UtcNow;
+                    ApplySetParamReply(par, st, sysid, compid, param);
 
                     // check if enabeling this param has added subparams, queue on gui thread
                     if (currentparamcount < par.param_count)
@@ -2363,6 +2368,100 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
 
         private int _parampoll = 0;
 
+        // setParamAsync's handling of the vehicle's answer.
+        private void ApplySetParamReply(mavlink_param_value_t par, string st, uint sysid, byte compid, MAVLinkParam param)
+        {
+            if (MAVlist[sysid, compid].apname == MAV_AUTOPILOT.ARDUPILOTMEGA)
+            {
+                MAVlist[sysid, compid].param[st] = new MAVLinkParam(st, BitConverter.GetBytes(par.param_value),
+                    MAV_PARAM_TYPE.REAL32, (MAV_PARAM_TYPE) par.param_type, param.default_value);
+            }
+            else
+            {
+                MAVlist[sysid, compid].param[st] = new MAVLinkParam(st, BitConverter.GetBytes(par.param_value),
+                    (MAV_PARAM_TYPE) par.param_type, (MAV_PARAM_TYPE) par.param_type);
+            }
+
+            log.Info("setParam gotback " + st + " : " + MAVlist[sysid, compid].param[st]);
+
+            lastparamset = DateTime.UtcNow;
+        }
+
+        // GetParamAsync's update of the table with the vehicle's answer.
+        private void ApplyGetParamReply(mavlink_param_value_t par, string st, uint sysid, byte compid)
+        {
+            if (MAVlist[sysid, compid].apname == MAV_AUTOPILOT.ARDUPILOTMEGA)
+            {
+                MAVlist[sysid, compid].param[st] = new MAVLinkParam(st,
+                    BitConverter.GetBytes(par.param_value), MAV_PARAM_TYPE.REAL32,
+                    (MAV_PARAM_TYPE) par.param_type);
+            }
+            else
+            {
+                MAVlist[sysid, compid].param[st] = new MAVLinkParam(st,
+                    BitConverter.GetBytes(par.param_value), (MAV_PARAM_TYPE) par.param_type,
+                    (MAV_PARAM_TYPE) par.param_type);
+            }
+
+            lock(MAVlist[sysid, compid].param_types)
+                MAVlist[sysid, compid].param_types[st] = (MAV_PARAM_TYPE) par.param_type;
+
+            log.Info(DateTime.Now.Millisecond + " got param " + (par.param_index) + " of " +
+                     (par.param_count) + " name: " + st);
+        }
+
+        private static string ParamName(mavlink_param_value_t par)
+        {
+            string st = Encoding.UTF8.GetString(par.param_id);
+            int pos = st.IndexOf('\0');
+            return pos != -1 ? st.Substring(0, pos) : st;
+        }
+
+        // A message the C++ core asks to send, as payload bytes, through generatePacket.
+        private void SendPayload(uint msgid, byte[] payload, uint sysid, byte compid)
+        {
+            var type = MAVLINK_MESSAGE_INFOS.GetMessageInfo(msgid).type;
+            generatePacket((int) msgid, MavlinkUtil.ByteArrayToStructureGC(payload, type, 0, (byte) payload.Length),
+                sysid, compid);
+        }
+
+        // Runs a core exchange the way the request loops here do: reading the link itself until the
+        // reply comes or the core gives up. The reply, or null on a timeout.
+        private async Task<MAVLinkMessage> NativeExchangeAsync(MissionPlanner.Mavlink.Native.MpExchange exchange, uint sysid,
+            byte compid, MAVLINK_MSG_ID reply)
+        {
+            using (exchange)
+            {
+                var sub = SubscribeToPacketType(reply, buffer =>
+                {
+                    exchange.Frame(buffer.buffer);
+                    return true;
+                }, sysid, compid);
+                try
+                {
+                    exchange.Start();
+                    while (true)
+                    {
+                        var state = exchange.Tick();
+                        if (state == MissionPlanner.Mavlink.Native.MpExchange.Result.Done)
+                        {
+                            var frame = exchange.Reply;
+                            return frame == null ? null : new MAVLinkMessage(frame);
+                        }
+
+                        if (state == MissionPlanner.Mavlink.Native.MpExchange.Result.TimedOut)
+                            return null;
+
+                        await readPacketAsync().ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    UnSubscribeToPacketType(sub);
+                }
+            }
+        }
+
         // The version strings the vehicle sends as STATUSTEXT along with its parameters.
         private bool ParamListStatusText(MAVLinkMessage buffer, uint sysid, byte compid)
         {
@@ -2410,12 +2509,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
 
             using (var download = new MissionPlanner.Mavlink.Native.MpParamDownload(sysid, compid))
             {
-                download.Send += (msgid, payload) =>
-                {
-                    var type = MAVLINK_MESSAGE_INFOS.GetMessageInfo(msgid).type;
-                    generatePacket((int) msgid, MavlinkUtil.ByteArrayToStructureGC(payload, type, 0, (byte) payload.Length),
-                        sysid, compid);
-                };
+                download.Send += (msgid, payload) => SendPayload(msgid, payload, sysid, compid);
                 download.Param += par =>
                 {
                     newparamlist.TotalReported = par.Count;
@@ -2584,6 +2678,27 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
 
             Array.Resize(ref req.param_id, 16);
 
+            if (requireresponce && Settings.Instance.GetBoolean("mpcore_params", false) &&
+                MpCoreNativeLoader.Available("params", log.Info))
+            {
+                try
+                {
+                    // the core sends the request, and again when the answer is late
+                    var reply = await NativeExchangeAsync(MissionPlanner.Mavlink.Native.MpExchange.ParamRead(sysid, compid,
+                            name, index, (msgid, payload) => SendPayload(msgid, payload, sysid, compid)),
+                        sysid, compid, MAVLINK_MSG_ID.PARAM_VALUE).ConfigureAwait(false);
+                    if (reply == null)
+                        throw new TimeoutException("Timeout on read - GetParam");
+                    var par = reply.ToStructure<mavlink_param_value_t>();
+                    ApplyGetParamReply(par, ParamName(par), sysid, compid);
+                    return par.param_value;
+                }
+                finally
+                {
+                    giveComport = false;
+                }
+            }
+
             generatePacket((byte) MAVLINK_MSG_ID.PARAM_REQUEST_READ, req, sysid, compid);
 
             if (!requireresponce)
@@ -2638,27 +2753,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                             continue;
                         }
 
-                        // update table
-                        if (MAVlist[sysid, compid].apname == MAV_AUTOPILOT.ARDUPILOTMEGA)
-                        {
-                            var offset = Marshal.OffsetOf(typeof(mavlink_param_value_t), "param_value");
-                            MAVlist[sysid, compid].param[st] = new MAVLinkParam(st,
-                                BitConverter.GetBytes(par.param_value), MAV_PARAM_TYPE.REAL32,
-                                (MAV_PARAM_TYPE) par.param_type);
-                        }
-                        else
-                        {
-                            var offset = Marshal.OffsetOf(typeof(mavlink_param_value_t), "param_value");
-                            MAVlist[sysid, compid].param[st] = new MAVLinkParam(st,
-                                BitConverter.GetBytes(par.param_value), (MAV_PARAM_TYPE) par.param_type,
-                                (MAV_PARAM_TYPE) par.param_type);
-                        }
-
-                        lock(MAVlist[sysid, compid].param_types)
-                            MAVlist[sysid, compid].param_types[st] = (MAV_PARAM_TYPE) par.param_type;
-
-                        log.Info(DateTime.Now.Millisecond + " got param " + (par.param_index) + " of " +
-                                 (par.param_count) + " name: " + st);
+                        ApplyGetParamReply(par, st, sysid, compid);
 
                         giveComport = false;
 

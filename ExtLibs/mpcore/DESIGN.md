@@ -132,7 +132,17 @@ version against the same simulated vehicle.
    other vehicles, no parameters, 32-bit IDs), the smoke test (the binding), and
    `MissionPlannerTests/Mavlink/MpCoreParamsTests.cs` (`getParamListAsync` both ways on a vehicle
    that loses a fifth of the first list: the same list, the same requests).
-2. Parameter set and single read (`setParamAsync`, `GetParamAsync`).
+2. **Parameter set and single read (done, same setting).** `Exchange` (`src/exchange.*`, C ABI
+   `mp_exchange_*` with `mp_param_set_create` / `mp_param_read_create`, C# `MpExchange`) is the
+   request/reply loop most of `MAVLinkInterface` repeats: send, wait for the matching reply (700 ms),
+   send again up to 3 times, then time out. `setParamAsync` and `GetParamAsync` keep their checks,
+   build the request as before, and with `mpcore_params` wait through `NativeExchangeAsync`, which
+   reads the link the same way the old loops do; the table updates on an answer are shared by both
+   paths (`ApplySetParamReply`, `ApplyGetParamReply`). A fire-and-forget read
+   (`requireresponce: false`) stays as it was. The same exchange will carry the other request loops
+   (mission count and items, home position, commands). Tests: `tests/test_exchange.cpp`, the C ABI
+   and smoke tests, and `MpCoreParamsTests.NativeParamSetAndReadBehaveTheSame` (a vehicle that
+   ignores the first two sets, reads by name and index, and the timeouts, both ways).
 3. Missions: download and upload for missions, fences and rally points (`mav_mission.cs`).
 4. MAVFTP.
 5. `CurrentState`.

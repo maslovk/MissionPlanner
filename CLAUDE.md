@@ -53,7 +53,7 @@ app it runs behind three settings, all off by default: `mpcore_shadow` (`MpCoreS
 same bytes as `MAVLinkInterface.readPacketAsync` and logs differences), `mpcore_receive`
 (`MpCoreReceiver`: frames the bytes instead of `readPacketAsync`'s byte loop, everything after
 framing unchanged), `mpcore_send` (`generatePacket` keeps every decision, the core encodes) and
-`mpcore_params` (`getParamListAsync`'s counting and retries in the core, phase 2 in DESIGN.md).
+`mpcore_params` (the parameter download, set and read decided in the core, phase 2 in DESIGN.md).
 
 ```sh
 git submodule update --init ExtLibs/mpcore/third_party/pymavlink

@@ -30,7 +30,7 @@ an `mcs.exe` is run with `mono`), or Roslyn's `csc.exe` on Windows. If the compi
 Inside Mission Planner the core runs behind settings, all off by default: `mpcore_shadow` (beside
 the C# parser, logging differences), `mpcore_receive` (instead of the C# byte loop in
 `readPacketAsync`), `mpcore_send` (encoding the frames `generatePacket` sends) and `mpcore_params`
-(the parameter list download's counting and retries); see DESIGN.md.
+(parameter download, set and read run by the core); see DESIGN.md.
 
 `mpcore_tests [name]` runs only the C++ cases whose name contains `name`.
 

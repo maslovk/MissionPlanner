@@ -19,14 +19,17 @@ namespace MissionPlannerTests.Mavlink
     {
         const int Count = 150;
 
-        // Answers PARAM_REQUEST_LIST (dropping every fifth parameter the first time) and
-        // PARAM_REQUEST_READ with PARAM_VALUE frames.
+        // Answers PARAM_REQUEST_LIST (dropping every fifth parameter the first time),
+        // PARAM_REQUEST_READ and PARAM_SET with PARAM_VALUE frames.
         sealed class Vehicle
         {
             readonly MpCoreTestSerial _serial;
             readonly MAVLink.MavlinkParse _encoder = new MAVLink.MavlinkParse();
+            readonly float[] _values = Enumerable.Range(0, Count).Select(i => i * 0.25f - 3).ToArray();
             int _lists;
-            public int Lists, Singles;
+            public int Lists, Singles, Sets;
+            public int IgnoreSets;          // this many PARAM_SETs get no answer
+            public bool Silent;             // nothing gets an answer
 
             public Vehicle(MpCoreTestSerial serial)
             {
@@ -34,14 +37,23 @@ namespace MissionPlannerTests.Mavlink
                 serial.OnWrite = Receive;
             }
 
+            static string Name(byte[] id)
+            {
+                var s = Encoding.ASCII.GetString(id);
+                int nul = s.IndexOf('\0');
+                return nul >= 0 ? s.Substring(0, nul) : s;
+            }
+
             void Send(int index)
             {
+                if (Silent)
+                    return;
                 var name = new byte[16];
                 Encoding.ASCII.GetBytes("PARAM_" + index).CopyTo(name, 0);
                 var value = new MAVLink.mavlink_param_value_t
                 {
                     param_id = name,
-                    param_value = index * 0.25f - 3,
+                    param_value = _values[index],
                     param_type = (byte)MAVLink.MAV_PARAM_TYPE.REAL32,
                     param_count = Count,
                     param_index = (ushort)index,
@@ -64,13 +76,26 @@ namespace MissionPlannerTests.Mavlink
                 {
                     Singles++;
                     var req = msg.ToStructure<MAVLink.mavlink_param_request_read_t>();
-                    if (req.param_index >= 0 && req.param_index < Count)
-                        Send(req.param_index);
+                    int index = req.param_index >= 0 ? req.param_index : Array.IndexOf(Names, Name(req.param_id));
+                    if (index >= 0 && index < Count)
+                        Send(index);
+                }
+                else if (msg.msgid == (uint)MAVLink.MAVLINK_MSG_ID.PARAM_SET)
+                {
+                    Sets++;
+                    var set = msg.ToStructure<MAVLink.mavlink_param_set_t>();
+                    int index = Array.IndexOf(Names, Name(set.param_id));
+                    if (index < 0 || Sets <= IgnoreSets)
+                        return;
+                    _values[index] = set.param_value;
+                    Send(index);
                 }
             }
         }
 
-        static (List<MAVLinkParam> list, Vehicle vehicle) Download(bool native)
+        static readonly string[] Names = Enumerable.Range(0, Count).Select(i => "PARAM_" + i).ToArray();
+
+        static (List<MAVLink.MAVLinkParam> list, Vehicle vehicle) Download(bool native)
         {
             Settings.Instance["mpcore_params"] = native.ToString();
             using (var port = new MAVLinkInterface { printbps = false })
@@ -84,8 +109,7 @@ namespace MissionPlannerTests.Mavlink
             }
         }
 
-        [TestMethod]
-        public void NativeParamDownloadGetsTheSameList()
+        static void RequireNative()
         {
             if (!MpCoreNativeLoader.Available("test", null))
             {
@@ -94,6 +118,80 @@ namespace MissionPlannerTests.Mavlink
                     Assert.Fail(why);
                 Assert.Inconclusive(why);
             }
+        }
+
+        sealed class SetAndRead
+        {
+            public float AfterSet, ByName, ByIndex;
+            public int Sets, Reads;
+            public bool SetTimedOut, ReadTimedOut;
+        }
+
+        // setParamAsync against a vehicle that ignores the first two PARAM_SETs, then reads by name
+        // and by index, then a set and a read the vehicle never answers.
+        static SetAndRead SetThenRead(bool native)
+        {
+            Settings.Instance["mpcore_params"] = native.ToString();
+            var r = new SetAndRead();
+            using (var port = new MAVLinkInterface { printbps = false })
+            {
+                var serial = new MpCoreTestSerial();
+                port.BaseStream = serial;
+                var vehicle = new Vehicle(serial) { IgnoreSets = 2 };
+                var mav = port.MAVlist[1, 1];
+                mav.apname = MAVLink.MAV_AUTOPILOT.ARDUPILOTMEGA;
+                foreach (var name in new[] { "PARAM_7", "PARAM_9", "PARAM_12" })
+                {
+                    mav.param[name] = new MAVLink.MAVLinkParam(name, 0, MAVLink.MAV_PARAM_TYPE.REAL32);
+                    mav.param_types[name] = MAVLink.MAV_PARAM_TYPE.REAL32;
+                }
+
+                Assert.IsTrue(port.setParamAsync(1, 1, "PARAM_7", 42.5).GetAwaiter().GetResult());
+                r.AfterSet = (float)mav.param["PARAM_7"].Value;
+                r.Sets = vehicle.Sets;
+                r.ByName = port.GetParamAsync(1, 1, "PARAM_9").GetAwaiter().GetResult();
+                r.ByIndex = port.GetParamAsync(1, 1, "", 12).GetAwaiter().GetResult();
+                r.Reads = vehicle.Singles;
+
+                vehicle.Silent = true;
+                try { port.setParamAsync(1, 1, "PARAM_9", 1).GetAwaiter().GetResult(); }
+                catch (TimeoutException) { r.SetTimedOut = true; }
+                try { port.GetParamAsync(1, 1, "PARAM_12").GetAwaiter().GetResult(); }
+                catch (TimeoutException) { r.ReadTimedOut = true; }
+            }
+
+            return r;
+        }
+
+        [TestMethod]
+        public void NativeParamSetAndReadBehaveTheSame()
+        {
+            RequireNative();
+            string oldSetting = Settings.Instance["mpcore_params"];
+            try
+            {
+                var csharp = SetThenRead(false);
+                var native = SetThenRead(true);
+                foreach (var r in new[] { csharp, native })
+                {
+                    Assert.AreEqual(42.5f, r.AfterSet, "the set value came back");
+                    Assert.AreEqual(3, r.Sets, "two PARAM_SETs ignored, the third answered");
+                    Assert.AreEqual(9 * 0.25f - 3, r.ByName);
+                    Assert.AreEqual(12 * 0.25f - 3, r.ByIndex);
+                    Assert.AreEqual(2, r.Reads);
+                    Assert.IsTrue(r.SetTimedOut && r.ReadTimedOut, "no answer: a TimeoutException");
+                }
+            }
+            finally
+            {
+                Settings.Instance["mpcore_params"] = oldSetting ?? "False";
+            }
+        }
+
+        [TestMethod]
+        public void NativeParamDownloadGetsTheSameList()
+        {
+            RequireNative();
 
             string oldSetting = Settings.Instance["mpcore_params"];
             try
