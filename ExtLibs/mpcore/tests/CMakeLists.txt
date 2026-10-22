@@ -21,7 +21,8 @@ add_test(NAME mpcore_capi_test COMMAND mpcore_capi_test)
 #   -DMPCORE_CSHARP_COMPILER=/path/to/mcs.exe (run with mono) or a csc/mcs executable
 #  - MpCoreSmoke: the P/Invoke binding (struct layouts, callbacks, signing);
 #  - MpCoreShadowParity: Mission Planner's own C# parser and the shadow comparer that
-#    MAVLinkInterface uses, on a recorded flight, clean and with line noise.
+#    MAVLinkInterface uses, on a recorded flight, clean and with line noise;
+#  - MpCoreReceiverTest: the receiver behind the mpcore_receive setting, on a fake port.
 set(MPCORE_CSHARP_COMPILER "" CACHE FILEPATH "C# compiler for the C# tests (optional)")
 set(MPCORE_CSHARP_SERIALIZATION_REF "System.Runtime.Serialization.dll" CACHE STRING
     "Reference that ExtLibs/Mavlink needs, as a name or a path")
@@ -72,6 +73,9 @@ if(MPCORE_CSHARP_COMPILER)
     endfunction()
 
     set(binding "${PROJECT_SOURCE_DIR}/bindings/csharp/MpCore.cs")
+    # Mission Planner's code around the core (ExtLibs/ArduPilot/Mavlink)
+    set(mavlink_glue_dir "${PROJECT_SOURCE_DIR}/../ArduPilot/Mavlink")
+    set(mavlink_glue "${mavlink_glue_dir}/MpCoreNativeLoader.cs")
     mpcore_csharp_test(MpCoreSmoke SOURCES "${binding}" "${PROJECT_SOURCE_DIR}/bindings/csharp/MpCoreSmoke.cs")
 
     # Mission Planner's MAVLink library, built from its sources as MAVLink.csproj does
@@ -88,10 +92,17 @@ if(MPCORE_CSHARP_COMPILER)
             COMMENT "Compiling Mission Planner's MAVLink.dll"
             VERBATIM)
         mpcore_csharp_test(MpCoreShadowParity
-            SOURCES "${binding}" "${PROJECT_SOURCE_DIR}/../ArduPilot/Mavlink/MpCoreShadow.cs"
+            SOURCES "${binding}" ${mavlink_glue} "${mavlink_glue_dir}/MpCoreShadow.cs"
                     "${PROJECT_SOURCE_DIR}/bindings/csharp/MpCoreShadowParity.cs"
             OPTIONS "-r:${mavlink_dll}"
             DEPENDS "${mavlink_dll}"
+            ARGS "${tlog}")
+        # the receiver that replaces readPacketAsync's byte loop, against a fake port
+        mpcore_csharp_test(MpCoreReceiverTest
+            SOURCES "${binding}" ${mavlink_glue} "${mavlink_glue_dir}/MpCoreReceiver.cs"
+                    "${PROJECT_SOURCE_DIR}/../Interfaces/ICommsSerial.cs"
+                    "${PROJECT_SOURCE_DIR}/../Utilities/PollDelay.cs"
+                    "${PROJECT_SOURCE_DIR}/bindings/csharp/MpCoreReceiverTest.cs"
             ARGS "${tlog}")
     endif()
 endif()

@@ -62,7 +62,7 @@ namespace MissionPlanner
                     }
                 }
 
-                ShadowReset();
+                MpCoreReset();
                 _baseStream = value;
             }
         }
@@ -88,12 +88,65 @@ namespace MissionPlanner
             _shadow?.BytesRead(buffer, offset, count);
         }
 
-        private void ShadowReset()
+        // The C++ core reading the link instead of the byte loop in readPacketAsync (setting
+        // "mpcore_receive", off by default): it frames the bytes, everything after framing stays here.
+        private MpCoreReceiver _receiver;
+        private bool _receiverChecked;
+
+        /// <summary>
+        /// Frames the C++ core has already parsed, while BaseStream may have nothing left to read:
+        /// readers that wait for BytesToRead must also keep reading while this is set.
+        /// </summary>
+        public bool HasBufferedFrames => _receiver?.HasFrames ?? false;
+
+        private MpCoreReceiver NativeReceiver()
+        {
+            if (!_receiverChecked)
+            {
+                _receiverChecked = true;
+                if (Settings.Instance.GetBoolean("mpcore_receive", false))
+                {
+                    var receiver = MpCoreReceiver.TryCreate(gcssysid, (byte) MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER, log.Info);
+                    if (receiver != null)
+                    {
+                        receiver.BytesRead += (data, offset, count) =>
+                        {
+                            if (rawlogfile != null && rawlogfile.CanWrite)
+                                rawlogfile.Write(data, offset, count);
+                        };
+                        receiver.TextLine += PlainTextLine;
+                    }
+
+                    _receiver = receiver;
+                }
+            }
+
+            return _receiver;
+        }
+
+        // what readPacketAsync's byte loop does with a line of text outside frames
+        private void PlainTextLine(string line)
+        {
+            Console.WriteLine(line);
+            plaintxtline = line;
+            plaintxtlinebuffer.Insert(0, plaintxtline);
+            while (plaintxtlinebuffer.Count >= 52)
+                plaintxtlinebuffer.RemoveAt(plaintxtlinebuffer.Count - 1);
+            log.Info(plaintxtline);
+            _bytesReceivedSubj.OnNext(line.Length);
+        }
+
+        private void MpCoreReset()
         {
             var shadow = _shadow;
             _shadow = null;
             _shadowChecked = false;
             shadow?.Dispose();
+
+            var receiver = _receiver;
+            _receiver = null;
+            _receiverChecked = false;
+            receiver?.Dispose();
         }
 
         public event EventHandler<MAVLinkMessage> OnPacketReceived
@@ -678,7 +731,7 @@ namespace MissionPlanner
             {
             }
 
-            ShadowReset();
+            MpCoreReset();
 
             try
             {
@@ -4712,6 +4765,30 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
             {
                 if (debug)
                     Console.WriteLine(DateTime.Now.Millisecond + " SR1 " + BaseStream?.BytesToRead);
+
+                var receiver = logreadmode || BaseStream == null ? null : NativeReceiver();
+                if (receiver != null)
+                {
+                    byte[] frame;
+                    try
+                    {
+                        if (BaseStream.ReadTimeout != 1200)
+                            BaseStream.ReadTimeout = 1200; // as below
+                        MAV.cs.datetime = DateTime.Now;
+                        frame = await receiver.NextFrameAsync(BaseStream, BaseStream.ReadTimeout).ConfigureAwait(false);
+                    }
+                    catch (Exception e)
+                    {
+                        log.Info("MAVLink readpacket read error: " + e);
+                        return MAVLinkMessage.Invalid;
+                    }
+
+                    if (frame == null)
+                        return MAVLinkMessage.Invalid;
+                    buffer = frame;
+                    count = frame.Length;
+                    goto framed;
+                }
                 
                 readloop:
 
@@ -4937,6 +5014,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                     Console.WriteLine(DateTime.Now.Millisecond + " SR4 " + BaseStream?.BytesToRead);
                 //ReadLock ended here
 
+                framed:
                 // resize the packet to the correct length
                 Array.Resize<byte>(ref buffer, count);
 
@@ -5029,7 +5107,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
 
                     // look within the last 20 bytes
                     int offset = buffer.Search(new byte[] { MAVLINK_STX }, Math.Max(1, buffer.Length - 20));
-                    if (offset > 0)
+                    if (offset > 0 && receiver == null)
                     {
                         var newbuffer = new byte[MAVLINK_MAX_PACKET_LEN + 25];
                         Array.ConstrainedCopy(buffer, offset, newbuffer, 0, buffer.Length - offset);

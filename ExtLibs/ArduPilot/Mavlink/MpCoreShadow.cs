@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using MissionPlanner.Mavlink.Native;
@@ -88,7 +87,7 @@ namespace MissionPlanner.ArduPilot.Mavlink
         {
             try
             {
-                PreloadNative();
+                MpCoreNativeLoader.Load();
                 var shadow = new MpCoreShadow(gcsSysId, gcsCompId, signingKeys, log);
                 shadow._log("mpcore shadow: started, " + Marshal.PtrToStringAnsi(MpCoreNative.mp_version_string()));
                 return shadow;
@@ -369,22 +368,6 @@ namespace MissionPlanner.ArduPilot.Mavlink
             for (int i = 0; i < f.Length && i < 24; i++)
                 sb.AppendFormat(" {0:x2}", f[i]);
             return sb.ToString();
-        }
-
-        [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
-        static extern IntPtr LoadLibraryW(string path);
-
-        // Mission Planner is AnyCPU: on Windows load the DLL matching the process from x86/ or x64/
-        // next to this assembly (the layout Utilities/NativeLibrary.cs uses), so DllImport("mpcore")
-        // finds it already loaded. Elsewhere Mono looks next to the assembly itself.
-        static void PreloadNative()
-        {
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                return;
-            var dir = Path.GetDirectoryName(typeof(MpCoreShadow).Assembly.Location) ?? "";
-            var path = Path.Combine(dir, Environment.Is64BitProcess ? "x64" : "x86", "mpcore.dll");
-            if (File.Exists(path))
-                LoadLibraryW(path);
         }
     }
 }

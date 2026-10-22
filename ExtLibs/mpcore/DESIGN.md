@@ -101,12 +101,10 @@ running meanwhile.
    `bindings/csharp/MpCore.cs` is linked into `MissionPlanner.ArduPilot.csproj`; it needs no
    unsafe code. Without the native library the shadow logs "not available" and does nothing.
 2. **Shadow mode (done, needs field time).** See below.
-3. **Switch the receive path.** With the setting on, `readPacketAsync` reads what is available
-   from `BaseStream`, feeds it to the core and returns frames from a queue filled by the frame
-   callback, one per call. Its contract (one `MAVLinkMessage` per call) stays the same for all 27
-   callers. `MAVState.packetslost`, `packetsnotlost`, `synclost`, `mavlinkv2` and the signing state
-   come from `mp_peer_stats`. `processInfoFromStream`, subscriptions and `OnPacketReceived` stay in
-   C# for now.
+3. **Switch the receive path (done, opt-in, setting `mpcore_receive`).** See "Native receive"
+   below. The per-vehicle statistics stay in C# for now (the core computes the same, as shadow mode
+   checks); moving `MAVState`'s counters to `mp_peer_stats` comes with step 4, when the core also
+   owns the signing state.
 4. **Switch the send path.** `generatePacket` calls `mp_link_send`; the write callback writes to
    `BaseStream` under `writelock` and to the tlog.
 5. **Then phase 2:** parameter, mission (all three types) and MAVFTP transfers move into the core
@@ -152,6 +150,36 @@ submodule: 163,851 MAVLink 1 frames from three systems). Clean, every frame matc
 differences; with line noise and 316 corrupted frames, the core matches every frame C# accepted
 (158,536) and recovers 4,999 more.
 
+## Native receive
+
+With `<mpcore_receive>True</mpcore_receive>` in `config.xml` (same place as `mpcore_shadow`),
+`MAVLinkInterface.readPacketAsync` no longer runs its byte loop: `MpCoreReceiver`
+(`ExtLibs/ArduPilot/Mavlink/`) reads `BaseStream`, the core frames the bytes, and each frame enters
+the C# code where the byte loop used to end (the `framed:` label). From there on nothing changed:
+the C# CRC and MAVLink 1 length checks, signature verification with `MAVState`'s keys and
+`signingignore` (the core runs with signatures ignored), the TARGET32 filter, tlog, sequence and
+loss counting, `processInfoFromStream`, subscriptions and events. The C# 20-byte resync is skipped,
+as the core has already scanned the bytes after a damaged frame. The setting is read once per
+connection; if the native library is missing it logs "mpcore receive: not available" and the C#
+byte loop runs as before.
+
+* **Reading.** At most 64 bytes per read, so bytes past the current frame stay in the port for code
+  that takes the port over and reads it directly (terminal, firmware upload). Frames parsed from the
+  same chunk wait in the receiver; `MAVLinkInterface.HasBufferedFrames` reports them, and
+  `MainV2.SerialReader` keeps reading while it is set (it used to wait for `BytesToRead`).
+* **Raw log and text.** Every byte read still goes to the raw log. Text lines outside frames go to
+  `plaintxtline`/`plaintxtlinebuffer` (used by the "no heartbeat" error) and the log as before, as
+  whole lines rather than character by character on the console.
+* **Timeouts.** A call returns `Invalid` after 1.2 s without bytes, as the byte loop did.
+* **Not used** in log playback, which keeps its own reader.
+
+Tests: `bindings/csharp/MpCoreReceiverTest.cs` runs the receiver on a fake port (the 163,851-frame
+flight, text and noise, the 64-byte reads, buffered frames, timeouts, closing).
+`MissionPlannerTests/Mavlink/MpCoreReceiveTests.cs` runs `MAVLinkInterface` itself both ways on the
+same streams (several vehicles, MAVLink 1 and 2, a 32-bit ID, a command to another system, a gap,
+text) and requires the same frames, loss counters and text, and that frames after a corrupted
+length byte are recovered; CI runs it with the native library (`MPCORE_REQUIRED=1`).
+
 ## Tests
 
 * `tests/wire.hpp` builds frames byte by byte with its own CRC, ported from
@@ -167,4 +195,6 @@ differences; with line noise and 316 corrupted frames, the core matches every fr
   checked against the native sizes, both bitnesses in CI).
 * `bindings/csharp/MpCoreShadowParity.cs`: the shadow comparer with Mission Planner's C# parser on
   a recorded flight (above).
+* `bindings/csharp/MpCoreReceiverTest.cs` and `MissionPlannerTests/Mavlink/MpCoreReceiveTests.cs`:
+  native receive (above).
 * Everything also runs under AddressSanitizer and UBSan (`linux-asan`).

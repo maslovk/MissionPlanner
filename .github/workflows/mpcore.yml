@@ -4,17 +4,21 @@ on:
   push:
     paths:
       - 'ExtLibs/mpcore/**'
-      # the MAVLink definitions, and the C# parser and shadow comparer the parity test runs
+      # the MAVLink definitions, and the C# code the binding tests compile
       - 'ExtLibs/Mavlink/**'
-      - 'ExtLibs/ArduPilot/Mavlink/MpCoreShadow.cs'
+      - 'ExtLibs/ArduPilot/Mavlink/MpCore*.cs'
+      - 'ExtLibs/Interfaces/ICommsSerial.cs'
+      - 'ExtLibs/Utilities/PollDelay.cs'
       - '.github/workflows/mpcore.yml'
       - '.github/scripts/run-annotated.ps1'
   pull_request:
     paths:
       - 'ExtLibs/mpcore/**'
-      # the MAVLink definitions, and the C# parser and shadow comparer the parity test runs
+      # the MAVLink definitions, and the C# code the binding tests compile
       - 'ExtLibs/Mavlink/**'
-      - 'ExtLibs/ArduPilot/Mavlink/MpCoreShadow.cs'
+      - 'ExtLibs/ArduPilot/Mavlink/MpCore*.cs'
+      - 'ExtLibs/Interfaces/ICommsSerial.cs'
+      - 'ExtLibs/Utilities/PollDelay.cs'
       - '.github/workflows/mpcore.yml'
       - '.github/scripts/run-annotated.ps1'
   workflow_dispatch:
