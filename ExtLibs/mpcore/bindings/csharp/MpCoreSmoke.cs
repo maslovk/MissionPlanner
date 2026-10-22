@@ -64,11 +64,7 @@ static class MpCoreSmoke
             encoder.Write += b => hb = b;
             encoder.Send(0, Heartbeat, 255, 190, true);
         }
-        unsafe
-        {
-            fixed (byte* p = hb)
-                MpCoreNative.mp_link_feed(link, p, (UIntPtr)hb.Length, 0);
-        }
+        MpCoreNative.mp_link_feed(link, hb, (UIntPtr)hb.Length, 0);
         Check(frameSize == Marshal.SizeOf(typeof(MpCoreNative.mp_frame)), "mp_frame size " + frameSize + " vs " + Marshal.SizeOf(typeof(MpCoreNative.mp_frame)));
         MpCoreNative.mp_link_destroy(link);
         GC.KeepAlive(onFrame);

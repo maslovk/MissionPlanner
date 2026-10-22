@@ -22,8 +22,13 @@ ctest --test-dir ExtLibs/mpcore/build/linux-debug
 On Windows use the `windows-x64` or `windows-x86` preset (Visual Studio 2022) and add
 `--config Release` / `-C Release`. Mission Planner is AnyCPU, so both DLLs are needed.
 
-To also test the C# binding, pass a C# compiler: `-DMPCORE_CSHARP_COMPILER=$(command -v mcs)`
-(Mono; an `mcs.exe` is run with `mono`), or Roslyn's `csc.exe` on Windows.
+To also test the C# binding and the shadow comparer, pass a C# compiler:
+`-DMPCORE_CSHARP_COMPILER=$(command -v mcs)` (Mono, with `libmono-system-runtime-serialization4.0-cil`;
+an `mcs.exe` is run with `mono`), or Roslyn's `csc.exe` on Windows. If the compiler cannot find
+`System.Runtime.Serialization.dll` by name, give its path in `MPCORE_CSHARP_SERIALIZATION_REF`.
+
+Inside Mission Planner the core currently runs in shadow mode only (setting `mpcore_shadow`); see
+DESIGN.md.
 
 `mpcore_tests [name]` runs only the C++ cases whose name contains `name`.
 
@@ -37,7 +42,7 @@ To also test the C# binding, pass a C# compiler: `-DMPCORE_CSHARP_COMPILER=$(com
 | `src/seq_tracker.*` | packet loss from sequence numbers |
 | `src/link.*` | one MAVLink stream: peers, signing, targeting, send |
 | `src/capi.cpp` | the exported C functions |
-| `bindings/csharp/` | P/Invoke declarations, an `MpLink` wrapper and its smoke test |
+| `bindings/csharp/` | P/Invoke declarations and an `MpLink` wrapper (linked into the ArduPilot project), a smoke test, the shadow parity test |
 | `tests/` | C++ unit tests, a C ABI test, independent wire fixtures |
 | `cmake/MavlinkHeaders.cmake` | generates the MAVLink C headers at build time |
 | `third_party/pymavlink` | upstream pymavlink (submodule, pinned) for the C generator |

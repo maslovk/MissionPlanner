@@ -48,7 +48,9 @@ The start of the move from C# to C/C++: the MAVLink core in C++17 with a C ABI (
 loaded by the C# app through P/Invoke first, a Qt app later. Read `ExtLibs/mpcore/DESIGN.md`
 before changing it. It does no I/O (bytes in via `mp_link_feed`, out via a callback) and is
 single-threaded per link. MAVLink C headers are generated at build time by the pinned
-`third_party/pymavlink` submodule from `ExtLibs/Mavlink/message_definitions/all.xml`.
+`third_party/pymavlink` submodule from `ExtLibs/Mavlink/message_definitions/all.xml`. Inside the
+app it currently only runs in shadow mode (`MpCoreShadow`, setting `mpcore_shadow`): it parses the
+same bytes as `MAVLinkInterface.readPacketAsync` and logs differences, changing nothing.
 
 ```sh
 git submodule update --init ExtLibs/mpcore/third_party/pymavlink

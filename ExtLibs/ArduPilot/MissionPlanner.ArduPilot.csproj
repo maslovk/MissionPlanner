@@ -45,6 +45,8 @@
       <AutoGen>True</AutoGen>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
+    <!-- P/Invoke declarations for the C++ core, kept with its C header -->
+    <Compile Include="..\mpcore\bindings\csharp\MpCore.cs" Link="Mavlink\MpCore.cs" />
 
   </ItemGroup>
 

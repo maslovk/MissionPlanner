@@ -94,15 +94,13 @@ running meanwhile.
 
 ## Phase 1: running inside Mission Planner (next)
 
-1. **Ship the libraries.** Build `mpcore.dll` for x86 and x64 (and `libmpcore.so` for the Linux
-   package) in CI and place them as `<appdir>/<arch>/`, the layout `Utilities/NativeLibrary.cs`
-   already uses for SkiaSharp; preload them in `Program.cs` the same way so `DllImport("mpcore")`
-   resolves. Add `bindings/csharp/MpCore.cs` to `MissionPlanner.ArduPilot.csproj` (it needs
-   `AllowUnsafeBlocks`, and stays out of the `LIB` build until Android ships the `.so`).
-2. **Shadow mode.** Behind a setting (off by default), `MAVLinkInterface.readPacketAsync` also
-   feeds every byte it reads into an `MpLink` and compares: each frame the C# parser returns must
-   come out of the core with the same bytes, and the per-MAV loss counters must agree. Differences
-   are logged. This runs on real links with no change in behaviour.
+1. **Ship the libraries (done).** `main.yml` builds `mpcore.dll` for x64 and x86 into
+   `bin/Release/net461/<arch>/`, the layout `Utilities/NativeLibrary.cs` uses for SkiaSharp;
+   `MpCoreShadow` preloads the one matching the process. `Linux/build.sh` puts `libmpcore.so` next
+   to the assemblies, where Mono looks (when CMake and the pymavlink submodule are available).
+   `bindings/csharp/MpCore.cs` is linked into `MissionPlanner.ArduPilot.csproj`; it needs no
+   unsafe code. Without the native library the shadow logs "not available" and does nothing.
+2. **Shadow mode (done, needs field time).** See below.
 3. **Switch the receive path.** With the setting on, `readPacketAsync` reads what is available
    from `BaseStream`, feeds it to the core and returns frames from a queue filled by the frame
    callback, one per call. Its contract (one `MAVLinkMessage` per call) stays the same for all 27
@@ -114,6 +112,45 @@ running meanwhile.
 5. **Then phase 2:** parameter, mission (all three types) and MAVFTP transfers move into the core
    as state machines with progress and cancellation, replacing the `giveComport` read loops; then
    `CurrentState`.
+
+## Shadow mode
+
+`ExtLibs/ArduPilot/Mavlink/MpCoreShadow.cs` runs the core beside `MAVLinkInterface`'s own parser
+on a live link. It changes nothing the application does; it only logs.
+
+**Turning it on.** With Mission Planner closed, add `<mpcore_shadow>True</mpcore_shadow>` to
+`config.xml` (Windows: `Documents\Mission Planner\`; Linux: `~/.local/share/Mission Planner/`, or
+`~/Documents/Mission Planner/` if that exists). It applies to each new connection.
+
+**What it compares.**
+* Bytes: the three `BaseStream.Read` calls in `readPacketAsync` feed exactly what they read to the
+  core (the C# resync re-parses its own buffer and is not fed again). Log playback is not shadowed.
+* Frames: each frame `readPacketAsync` accepts (CRC and signature checked, before the TARGET32
+  filter) must come out of the core with the same bytes. Both see the same bytes in the same order,
+  so frames are matched in order; a frame still unmatched after 2.5 s (longer than the core's 1.2 s
+  stall timeout) is reported. Unknown-msgid frames are not compared (neither side can check them).
+* Sync losses: after C# counts a frame, the growth of `MAVState.synclost` since the first check must
+  equal the growth of the core's count for that sysid/compid. Only the growth is compared, since
+  the C# count may predate the shadow, and only while both sides have produced the same frames.
+  (Lost-packet counts decay with timing that differs by microseconds, so they are not compared.)
+
+**What it logs** (to `MissionPlanner.log`): "started" with the core's version, or "not available"
+and why; up to 50 detailed differences (`missed by core` / `extra in core` with the frame's
+header and first bytes, `sync loss differs`); a summary every minute when something changed; and
+the totals when the link closes.
+
+**Reading the results.** `missed by core` is a bug in the core and blocks switching over. `extra
+in core` is expected where the core recovers frames the C# parser loses (see the differences
+above) and where C# rejects a MAVLink 1 frame whose length is not the message's base length,
+which the upstream parser accepts; anything else is worth a look. Bytes that other code reads from
+`BaseStream` directly (terminal, firmware upload) reach neither parser, so they cause no
+differences.
+
+**Parity test.** `bindings/csharp/MpCoreShadowParity.cs` drives the same class with Mission
+Planner's C# parser (`MavlinkParse`) over a recorded flight (`flight.tlog` in the pymavlink
+submodule: 163,851 MAVLink 1 frames from three systems). Clean, every frame matches with no
+differences; with line noise and 316 corrupted frames, the core matches every frame C# accepted
+(158,536) and recovers 4,999 more.
 
 ## Tests
 
@@ -128,4 +165,6 @@ running meanwhile.
 * `test_capi.c`: the ABI from plain C, including an older caller's smaller structs.
 * `bindings/csharp/MpCoreSmoke.cs`: the C# binding against the shared library (struct layouts
   checked against the native sizes, both bitnesses in CI).
+* `bindings/csharp/MpCoreShadowParity.cs`: the shadow comparer with Mission Planner's C# parser on
+  a recorded flight (above).
 * Everything also runs under AddressSanitizer and UBSan (`linux-asan`).

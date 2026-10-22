@@ -4,12 +4,16 @@ on:
   push:
     paths:
       - 'ExtLibs/mpcore/**'
-      - 'ExtLibs/Mavlink/message_definitions/**'
+      # the MAVLink definitions, and the C# parser and shadow comparer the parity test runs
+      - 'ExtLibs/Mavlink/**'
+      - 'ExtLibs/ArduPilot/Mavlink/MpCoreShadow.cs'
       - '.github/workflows/mpcore.yml'
   pull_request:
     paths:
       - 'ExtLibs/mpcore/**'
-      - 'ExtLibs/Mavlink/message_definitions/**'
+      # the MAVLink definitions, and the C# parser and shadow comparer the parity test runs
+      - 'ExtLibs/Mavlink/**'
+      - 'ExtLibs/ArduPilot/Mavlink/MpCoreShadow.cs'
       - '.github/workflows/mpcore.yml'
   workflow_dispatch:
 
@@ -29,7 +33,7 @@ jobs:
       - name: Check out pymavlink
         run: git submodule update --init --depth 1 ExtLibs/mpcore/third_party/pymavlink
       - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y ninja-build mono-mcs mono-runtime
+        run: sudo apt-get update && sudo apt-get install -y ninja-build mono-mcs mono-runtime libmono-system-runtime-serialization4.0-cil
       - name: Configure
         run: cmake --preset ${{ matrix.preset }} -S ExtLibs/mpcore -DMPCORE_CSHARP_COMPILER=$(command -v mcs)
       - name: Build

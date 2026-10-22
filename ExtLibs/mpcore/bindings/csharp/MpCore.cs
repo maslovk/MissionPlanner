@@ -154,13 +154,13 @@ namespace MissionPlanner.Mavlink.Native
         public static extern void mp_link_destroy(IntPtr link);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        public static extern unsafe UIntPtr mp_link_feed(IntPtr link, byte* data, UIntPtr len, long now_us);
+        public static extern UIntPtr mp_link_feed(IntPtr link, byte[] data, UIntPtr len, long now_us);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern UIntPtr mp_link_poll(IntPtr link, long now_us);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        public static extern unsafe int mp_link_send(IntPtr link, uint msgid, byte* payload, UIntPtr payload_len,
+        public static extern int mp_link_send(IntPtr link, uint msgid, byte[] payload, UIntPtr payload_len,
             uint target_sysid, byte target_compid, uint send_flags);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
@@ -251,12 +251,21 @@ namespace MissionPlanner.Mavlink.Native
 
         public IntPtr Handle => _link;
 
-        public unsafe int Feed(byte[] buffer, int offset, int count, long nowUs)
+        // arrays are pinned by the marshaller; a slice is copied here first
+        byte[] _scratch = new byte[300];
+
+        public int Feed(byte[] buffer, int offset, int count, long nowUs)
         {
+            if (buffer == null || offset < 0 || count < 0 || offset + count > buffer.Length)
+                throw new ArgumentOutOfRangeException(nameof(count));
             if (count == 0)
                 return (int)MpCoreNative.mp_link_poll(_link, nowUs);
-            fixed (byte* p = &buffer[offset])
-                return (int)MpCoreNative.mp_link_feed(_link, p, (UIntPtr)count, nowUs);
+            if (offset == 0)
+                return (int)MpCoreNative.mp_link_feed(_link, buffer, (UIntPtr)count, nowUs);
+            if (_scratch.Length < count)
+                _scratch = new byte[count];
+            Buffer.BlockCopy(buffer, offset, _scratch, 0, count);
+            return (int)MpCoreNative.mp_link_feed(_link, _scratch, (UIntPtr)count, nowUs);
         }
 
         public int Poll(long nowUs)
@@ -265,13 +274,12 @@ namespace MissionPlanner.Mavlink.Native
         }
 
         /// <summary>Returns the bytes written, or a negative MpCoreNative.MP_ERR_*.</summary>
-        public unsafe int Send(uint msgId, byte[] payload, uint targetSysId, byte targetCompId, bool forceMavlink2 = false)
+        public int Send(uint msgId, byte[] payload, uint targetSysId, byte targetCompId, bool forceMavlink2 = false)
         {
             uint flags = forceMavlink2 ? MpCoreNative.MP_SEND_FORCE_MAVLINK2 : 0;
-            if (payload == null || payload.Length == 0)
-                return MpCoreNative.mp_link_send(_link, msgId, null, UIntPtr.Zero, targetSysId, targetCompId, flags);
-            fixed (byte* p = payload)
-                return MpCoreNative.mp_link_send(_link, msgId, p, (UIntPtr)payload.Length, targetSysId, targetCompId, flags);
+            int length = payload == null ? 0 : payload.Length;
+            return MpCoreNative.mp_link_send(_link, msgId, length == 0 ? null : payload, (UIntPtr)length, targetSysId,
+                targetCompId, flags);
         }
 
         public void AddSigningKey(byte[] key)

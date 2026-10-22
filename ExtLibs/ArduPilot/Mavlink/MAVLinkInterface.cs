@@ -62,8 +62,38 @@ namespace MissionPlanner
                     }
                 }
 
+                ShadowReset();
                 _baseStream = value;
             }
+        }
+
+        // The C++ core (ExtLibs/mpcore) parsing the same bytes as readPacketAsync, to find where they
+        // disagree before it replaces this parser. Off unless the "mpcore_shadow" setting is on; it
+        // only logs. See ExtLibs/mpcore/DESIGN.md.
+        private MpCoreShadow _shadow;
+        private bool _shadowChecked;
+
+        private void ShadowBytes(byte[] buffer, int offset, int count)
+        {
+            if (count <= 0 || logreadmode)
+                return;
+            if (!_shadowChecked)
+            {
+                _shadowChecked = true;
+                if (Settings.Instance.GetBoolean("mpcore_shadow", false))
+                    _shadow = MpCoreShadow.TryCreate(gcssysid, (byte) MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER,
+                        MAVAuthKeys.Keys.Values.Select(k => k.Key).ToArray(), log.Info);
+            }
+
+            _shadow?.BytesRead(buffer, offset, count);
+        }
+
+        private void ShadowReset()
+        {
+            var shadow = _shadow;
+            _shadow = null;
+            _shadowChecked = false;
+            shadow?.Dispose();
         }
 
         public event EventHandler<MAVLinkMessage> OnPacketReceived
@@ -647,6 +677,8 @@ namespace MissionPlanner
             catch
             {
             }
+
+            ShadowReset();
 
             try
             {
@@ -4736,7 +4768,8 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                                     Console.WriteLine(DateTime.Now.Millisecond + " SR1a " + BaseStream?.BytesToRead);
                                 if (BaseStream.IsOpen)
                                 {
-                                    BaseStream.Read(buffer, count, 1);
+                                    int got = BaseStream.Read(buffer, count, 1);
+                                    ShadowBytes(buffer, count, got);
                                     if (rawlogfile != null && rawlogfile.CanWrite)
                                         rawlogfile.WriteByte(buffer[count]);
                                 }
@@ -4831,6 +4864,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                             //Console.WriteLine("read: " + lapse);
                             if (debug)
                                 Console.WriteLine(DateTime.Now.Millisecond + " SR2b " + BaseStream?.BytesToRead);
+                            ShadowBytes(buffer, count + 1, read);
                             if (rawlogfile != null && rawlogfile.CanWrite)
                                 rawlogfile.Write(buffer, count + 1, read);
                             count += read;
@@ -4875,6 +4909,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                                             continue;
                                         }
                                         int read = BaseStream.Read(buffer, offset, length - offset);
+                                        ShadowBytes(buffer, offset, read);
                                         if (rawlogfile != null && rawlogfile.CanWrite)
                                             rawlogfile.Write(buffer, offset, read);
                                         offset += read;
@@ -5066,6 +5101,8 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                 }
 
                 // packet is now verified
+                if (!logreadmode)
+                    _shadow?.FrameAccepted(buffer);
 
                 // log before any processing that could send response packets (e.g. timesync)
                 try
@@ -5186,6 +5223,8 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
 
                         MAVlist[sysid, compid].packetsnotlost++;
                     }
+                    if (!logreadmode)
+                        _shadow?.CheckSyncLoss(sysid, compid, MAVlist[sysid, compid].synclost);
                     WhenPacketReceived.OnNext(1);
 
                     // packet stats per mav
