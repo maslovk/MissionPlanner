@@ -200,26 +200,33 @@ version against the same simulated vehicle.
    packets, bursts, holes, short files, sessions, timeouts, listings, commands), the C ABI and
    smoke tests, and `MissionPlannerTests/Mavlink/MpCoreFtpTests.cs` (both ways on one vehicle that
    loses a burst packet and a write ACK: the same file, upload, listing, CRC and errors).
-6. **`CurrentState` (started: a shadow, setting `mpcore_state_shadow`).** `VehicleState`
+6. **`CurrentState` (the decode, shadowed: setting `mpcore_state_shadow`).** `VehicleState`
    (`src/vehicle_state.*`, C ABI `mp_vehicle_*` with the flat `mp_vehicle_state`, C# `MpVehicle`)
-   decodes what the HUD, map and status screens are built from as `Parent_OnPacketReceived` and
-   the property setters do: HEARTBEAT, SYS_STATUS, EXTENDED_SYS_STATE, BATTERY2, BATTERY_STATUS
-   (nine batteries, battery 0's voltage smoothed 0.4/0.6, its remaining clamped), ATTITUDE,
-   GLOBAL_POSITION_INT and GPS_RAW_INT (the GPS's position only while GLOBAL_POSITION_INT has none,
-   its speed and course only with a fix), GPS_STATUS, RADIO/RADIO_STATUS (from any system),
-   MISSION_CURRENT, NAV_CONTROLLER_OUTPUT, RC_CHANNELS(_RAW), SERVO_OUTPUT_RAW (two ports), VFR_HUD
-   (reversed throttle), VIBRATION, EKF_STATUS_REPORT (CurrentState's red rules), SCALED_PRESSURE and
-   TERRAIN_REPORT. The values are the stored ones, before display units; the layout is ordered by
-   field size so C and C# cannot pad it differently. `MpCoreStateShadow` decodes each message a
-   CurrentState takes with the core too and, after each one the core decodes, compares the values
-   that message sets with CurrentState's (backing fields where a property converts units) and logs
-   the differences, like the frame shadow. What reads settings, parameters or the firmware's mode
-   names (the mode string, messageHigh, speech, low airspeed) and what CurrentState derives from
-   the wall clock (climb rate without VFR_HUD, mAh from SYS_STATUS current, time in the air) stays
-   in C#. Next: the rest of the messages, then CurrentState reading the core's values for the
-   decoded ones. Tests: `tests/test_vehicle_state.cpp`, the smoke test (layout and a decode) and
-   `MissionPlannerTests/Mavlink/MpCoreStateShadowTests.cs` (flight.tlog through MAVLinkInterface and
-   CurrentState with the shadow: no differences).
+   decodes CurrentState's numeric telemetry as `Parent_OnPacketReceived` and the property setters
+   do, from about 50 messages: heartbeat and system status (armed, landed, failsafe, custom mode,
+   load, sensor bits, error counts), batteries (nine BATTERY_STATUS ids, battery 0's voltage
+   smoothed 0.4/0.6 and its remaining clamped, SYS_STATUS and BATTERY2 current with mAh integrated
+   against the caller's clock), attitude and AHRS2, position (GLOBAL_POSITION_INT, the GPS's
+   position only while that has none, its speed and course only with a fix, GPS2_RAW,
+   LOCAL_POSITION_NED), VFR_HUD (reversed throttle), navigation and mission (NAV_CONTROLLER_OUTPUT,
+   MISSION_CURRENT, FENCE_STATUS), RC in and servo out (two ports), radio (from any system), IMUs
+   (RAW/SCALED_IMU 1-3, HIGHRES_IMU's flagged groups), pressure, terrain, rangefinders (the lowest
+   downward DISTANCE_SENSOR as the altitude, as CurrentState picks it), EKF (its red rules),
+   vibration, wind, ESCs, RPM, EFI, generator, power, MCU, memory, PID tuning, hygrometer, airspeed,
+   mount, optical flow, AOA/SSA, system time and AUTOPILOT_VERSION. Values are CurrentState's
+   stored ones, before display units (but the wind speed, which CurrentState stores in them); the
+   layout is ordered by field size so C and C# cannot pad it differently.
+   `MpCoreStateShadow` decodes each message a CurrentState takes with the core too and, after each
+   one the core decodes, compares the values that message sets with CurrentState's (backing
+   fields where a property converts units) and logs the differences, like the frame shadow. Left in
+   C#: what reads settings, parameters or the firmware's mode names (the mode string, messageHigh,
+   speech, low airspeed), what needs the home altitude (HIGH_LATENCY, HIGH_LATENCY2,
+   POSITION_TARGET_GLOBAL_INT), NAMED_VALUE_FLOAT's named custom fields, the gimbal quaternion, the
+   transponder status, HIL channels, and what CurrentState derives from the wall clock (climb rate
+   without VFR_HUD, time in the air, log playback speed-up). Next: CurrentState reading the core's
+   values for what it decodes, behind its own setting. Tests: `tests/test_vehicle_state.cpp`, the
+   smoke test (layout and decodes) and `MissionPlannerTests/Mavlink/MpCoreStateShadowTests.cs`
+   (flight.tlog through MAVLinkInterface and CurrentState with the shadow: no differences).
 
 ## Shadow mode
 

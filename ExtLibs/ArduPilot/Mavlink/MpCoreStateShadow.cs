@@ -296,6 +296,189 @@ namespace MissionPlanner.ArduPilot.Mavlink
                 Add(ter, "_ter_alt", Stored("_ter_alt"), s => s.ter_alt);
                 Same(ter, "ter_load", s => s.ter_load);
                 Same(ter, "ter_pend", s => s.ter_pend);
+
+                var press2 = MAVLink.MAVLINK_MSG_ID.SCALED_PRESSURE2;
+                Same(press2, "press_abs2", s => s.press_abs2);
+                Same(press2, "press_temp2", s => s.press_temp2);
+                Same(press2, "airspeed2_temp", s => s.airspeed2_temp);
+
+                var gps2 = MAVLink.MAVLINK_MSG_ID.GPS2_RAW;
+                Same(gps2, "lat2", s => s.lat2);
+                Same(gps2, "lng2", s => s.lng2);
+                Same(gps2, "altasl2", s => s.altasl2);
+                Same(gps2, "gpsstatus2", s => s.gps_fix_type2);
+                Same(gps2, "gpshdop2", s => s.gps_hdop2);
+                Same(gps2, "satcount2", s => s.satcount2);
+                Same(gps2, "groundspeed2", s => s.groundspeed2);
+                Same(gps2, "groundcourse2", s => s.groundcourse2);
+                Same(gps2, "gpsh_acc2", s => s.gps_h_acc2);
+                Same(gps2, "gpsyaw2", s => s.gps_yaw2);
+
+                Same(MAVLink.MAVLINK_MSG_ID.RPM, "rpm1", s => s.rpm[0]);
+                Same(MAVLink.MAVLINK_MSG_ID.RPM, "rpm2", s => s.rpm[1]);
+
+                var escs = new[]
+                {
+                    MAVLink.MAVLINK_MSG_ID.ESC_TELEMETRY_1_TO_4, MAVLink.MAVLINK_MSG_ID.ESC_TELEMETRY_5_TO_8,
+                    MAVLink.MAVLINK_MSG_ID.ESC_TELEMETRY_9_TO_12, MAVLink.MAVLINK_MSG_ID.ESC_TELEMETRY_13_TO_16
+                };
+                for (int i = 0; i < 16; i++)
+                {
+                    int esc = i;
+                    var msg = escs[i / 4];
+                    Same(msg, "esc" + (i + 1) + "_volt", s => s.esc_voltage[esc]);
+                    Same(msg, "esc" + (i + 1) + "_curr", s => s.esc_current[esc]);
+                    Same(msg, "esc" + (i + 1) + "_rpm", s => s.esc_rpm[esc]);
+                    Same(msg, "esc" + (i + 1) + "_temp", s => s.esc_temp[esc]);
+                }
+
+                // the IMUs: RAW_IMU and SCALED_IMU are the first, HIGHRES_IMU any of three
+                var imus = new[]
+                {
+                    new[] { MAVLink.MAVLINK_MSG_ID.RAW_IMU, MAVLink.MAVLINK_MSG_ID.SCALED_IMU, MAVLink.MAVLINK_MSG_ID.HIGHRES_IMU },
+                    new[] { MAVLink.MAVLINK_MSG_ID.SCALED_IMU2, MAVLink.MAVLINK_MSG_ID.HIGHRES_IMU },
+                    new[] { MAVLink.MAVLINK_MSG_ID.SCALED_IMU3, MAVLink.MAVLINK_MSG_ID.HIGHRES_IMU },
+                };
+                for (int imu = 0; imu < 3; imu++)
+                {
+                    var suffix = imu == 0 ? "" : (imu + 1).ToString();
+                    foreach (var msg in imus[imu])
+                    {
+                        for (int axis = 0; axis < 3; axis++)
+                        {
+                            int i = imu * 3 + axis;
+                            var name = "xyz"[axis] + suffix;
+                            Same(msg, "a" + name, s => s.imu_accel[i]);
+                            Same(msg, "g" + name, s => s.imu_gyro[i]);
+                            Same(msg, "m" + name, s => s.imu_mag[i]);
+                        }
+
+                        int t = imu;
+                        if (msg != MAVLink.MAVLINK_MSG_ID.HIGHRES_IMU)
+                            Same(msg, "imu" + (imu + 1) + "_temp", s => s.imu_temp[t]);
+                    }
+                }
+                var highres = MAVLink.MAVLINK_MSG_ID.HIGHRES_IMU;
+                Same(highres, "press_abs", s => s.press_abs);
+                Same(highres, "press_temp", s => s.press_temp);
+                Add(highres, "_altasl", Stored("_altasl"), s => s.altasl);
+
+                var pid = MAVLink.MAVLINK_MSG_ID.PID_TUNING;
+                Same(pid, "pidff", s => s.pid_ff);
+                Same(pid, "pidP", s => s.pid_p);
+                Same(pid, "pidI", s => s.pid_i);
+                Same(pid, "pidD", s => s.pid_d);
+                Same(pid, "pidaxis", s => s.pid_axis);
+                Same(pid, "piddesired", s => s.pid_desired);
+                Same(pid, "pidachieved", s => s.pid_achieved);
+                Same(pid, "pidSRate", s => s.pid_srate);
+                Same(pid, "pidPDmod", s => s.pid_pdmod);
+                var axes = new[] { "Roll", "Pitch", "Yaw", "AccZ", "Steer", "Landing" };
+                for (int i = 0; i < axes.Length; i++)
+                {
+                    int axis = i;
+                    Same(pid, "pidSRate" + axes[i], s => s.pid_srate_axis[axis]);
+                }
+
+                var hygro = MAVLink.MAVLINK_MSG_ID.HYGROMETER_SENSOR;
+                Same(hygro, "hygrotemp1", s => s.hygro_temp[0]);
+                Same(hygro, "hygrohumi1", s => s.hygro_humi[0]);
+                Same(hygro, "hygrotemp2", s => s.hygro_temp[1]);
+                Same(hygro, "hygrohumi2", s => s.hygro_humi[1]);
+
+                Same(MAVLink.MAVLINK_MSG_ID.AIRSPEED_AUTOCAL, "asratio", s => s.asratio);
+                Add(MAVLink.MAVLINK_MSG_ID.AIRSPEED, "_airspeed", Stored("_airspeed"), s => s.airspeed);
+                Same(MAVLink.MAVLINK_MSG_ID.AIRSPEED, "airspeed1_temp", s => s.airspeed1_temp);
+
+                var epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                Add(MAVLink.MAVLINK_MSG_ID.SYSTEM_TIME, "gpstime", cs => (cs.gpstime - epoch).Ticks / 10000,
+                    s => s.time_unix_usec / 1000);
+
+                Same(MAVLink.MAVLINK_MSG_ID.HWSTATUS, "hwvoltage", s => s.hwvoltage);
+                Same(MAVLink.MAVLINK_MSG_ID.HWSTATUS, "i2cerrors", s => s.i2cerrors);
+
+                Add(MAVLink.MAVLINK_MSG_ID.RANGEFINDER, "_sonarrange", Stored("_sonarrange"), s => s.sonarrange);
+                Same(MAVLink.MAVLINK_MSG_ID.RANGEFINDER, "sonarvoltage", s => s.sonarvoltage);
+                var distance = MAVLink.MAVLINK_MSG_ID.DISTANCE_SENSOR;
+                Add(distance, "_sonarrange", Stored("_sonarrange"), s => s.sonarrange);
+                for (int i = 0; i < 10; i++)
+                {
+                    int id = i;
+                    Same(distance, "rangefinder" + (i + 1), s => s.rangefinder[id]);
+                }
+
+                var efi = MAVLink.MAVLINK_MSG_ID.EFI_STATUS;
+                Same(efi, "efi_baro", s => s.efi_baro);
+                Same(efi, "efi_headtemp", s => s.efi_headtemp);
+                Same(efi, "efi_load", s => s.efi_load);
+                Same(efi, "efi_health", s => s.efi_health);
+                Same(efi, "efi_exhasttemp", s => s.efi_exhausttemp);
+                Same(efi, "efi_intaketemp", s => s.efi_intaketemp);
+                Same(efi, "efi_rpm", s => s.efi_rpm);
+                Same(efi, "efi_fuelflow", s => s.efi_fuelflow);
+                Same(efi, "efi_fuelconsumed", s => s.efi_fuelconsumed);
+                Same(efi, "efi_fuelpressure", s => s.efi_fuelpressure);
+
+                var power = MAVLink.MAVLINK_MSG_ID.POWER_STATUS;
+                Same(power, "boardvoltage", s => s.boardvoltage);
+                Same(power, "servovoltage", s => s.servovoltage);
+                Same(power, "voltageflag", s => s.voltageflag);
+
+                // CurrentState keeps the wind speed in display units
+                Same(MAVLink.MAVLINK_MSG_ID.WIND, "wind_dir", s => s.wind_dir);
+                Same(MAVLink.MAVLINK_MSG_ID.WIND, "wind_vel", s => s.wind_speed * CurrentState.multiplierspeed);
+
+                Same(MAVLink.MAVLINK_MSG_ID.MEMINFO, "freemem", s => s.freemem);
+                Same(MAVLink.MAVLINK_MSG_ID.MEMINFO, "brklevel", s => s.brklevel);
+                Same(MAVLink.MAVLINK_MSG_ID.AOA_SSA, "AOA", s => s.aoa);
+                Same(MAVLink.MAVLINK_MSG_ID.AOA_SSA, "SSA", s => s.ssa);
+
+                var mount = MAVLink.MAVLINK_MSG_ID.MOUNT_STATUS;
+                Same(mount, "campointa", s => s.campoint[0]);
+                Same(mount, "campointb", s => s.campoint[1]);
+                Same(mount, "campointc", s => s.campoint[2]);
+
+                var flow = MAVLink.MAVLINK_MSG_ID.OPTICAL_FLOW;
+                Same(flow, "opt_m_x", s => s.opt_m_x);
+                Same(flow, "opt_m_y", s => s.opt_m_y);
+                Same(flow, "opt_x", s => s.opt_x);
+                Same(flow, "opt_y", s => s.opt_y);
+                Same(flow, "opt_qua", s => s.opt_qua);
+
+                var local = MAVLink.MAVLINK_MSG_ID.LOCAL_POSITION_NED;
+                Same(local, "posn", s => s.posn);
+                Same(local, "pose", s => s.pose);
+                Same(local, "posd", s => s.posd);
+
+                var fence = MAVLink.MAVLINK_MSG_ID.FENCE_STATUS;
+                Same(fence, "fenceb_type", s => s.fenceb_type);
+                Same(fence, "fenceb_status", s => s.fenceb_status);
+                Same(fence, "fenceb_count", s => s.fenceb_count);
+
+                var gen = MAVLink.MAVLINK_MSG_ID.GENERATOR_STATUS;
+                Same(gen, "gen_status", s => s.gen_status);
+                Same(gen, "gen_speed", s => s.gen_speed);
+                Same(gen, "gen_current", s => s.gen_current);
+                Same(gen, "gen_voltage", s => s.gen_voltage);
+                Same(gen, "gen_runtime", s => s.gen_runtime);
+                Same(gen, "gen_maint_time", s => s.gen_maint_time);
+
+                var mcu = MAVLink.MAVLINK_MSG_ID.MCU_STATUS;
+                Same(mcu, "mcutemp", s => s.mcu_temp);
+                Same(mcu, "mcuvoltage", s => s.mcu_voltage);
+                Same(mcu, "mcuminvolt", s => s.mcu_voltage_min);
+                Same(mcu, "mcumaxvolt", s => s.mcu_voltage_max);
+
+                var ahrs2 = MAVLink.MAVLINK_MSG_ID.AHRS2;
+                Same(ahrs2, "ahrs2_roll", s => s.ahrs2_roll);
+                Same(ahrs2, "ahrs2_pitch", s => s.ahrs2_pitch);
+                Same(ahrs2, "ahrs2_yaw", s => s.ahrs2_yaw);
+                Same(ahrs2, "ahrs2_alt", s => s.ahrs2_alt);
+                Same(ahrs2, "ahrs2_lat", s => s.ahrs2_lat);
+                Same(ahrs2, "ahrs2_lng", s => s.ahrs2_lng);
+
+                Same(MAVLink.MAVLINK_MSG_ID.AUTOPILOT_VERSION, "capabilities", s => s.capabilities);
+                Same(MAVLink.MAVLINK_MSG_ID.AUTOPILOT_VERSION, "uid", s => s.uid);
             }
             catch (MissingMemberException ex)
             {
