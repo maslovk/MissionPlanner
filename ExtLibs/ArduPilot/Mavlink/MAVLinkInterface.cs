@@ -2094,6 +2094,9 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
         /// <returns></returns>
         public async Task<MAVLinkParamList> getParamListAsync(uint sysid, byte compid)
         {
+            if (Settings.Instance.GetBoolean("mpcore_params", false) && MpCoreNativeLoader.Available("params", log.Info))
+                return await getParamListNativeAsync(sysid, compid).ConfigureAwait(false);
+
             List<int> indexsreceived = new List<int>();
 
             // create new list so if canceled we use the old list
@@ -2117,43 +2120,8 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
             bool missing_params = false;
             DateTime lastonebyone = DateTime.MinValue;
 
-            var sub2 = SubscribeToPacketType(MAVLINK_MSG_ID.STATUSTEXT, buffer =>
-            {
-                if (buffer.msgid == (byte) MAVLINK_MSG_ID.STATUSTEXT)
-                {
-                    var msg = buffer.ToStructure<mavlink_statustext_t>();
-
-                    string logdata = Encoding.UTF8.GetString(msg.text);
-
-                    int ind = logdata.IndexOf('\0');
-                    if (ind != -1)
-                        logdata = logdata.Substring(0, ind);
-
-                    if (logdata.ToLower().Contains("copter") || logdata.ToLower().Contains("rover") ||
-                        logdata.ToLower().Contains("plane"))
-                    {
-                        MAVlist[sysid, compid].VersionString = logdata;
-                    }
-                    else if (logdata.ToLower().Contains("nuttx") || logdata.ToLower().Contains("chibios"))
-                    {
-                        MAVlist[sysid, compid].SoftwareVersions = logdata;
-                    }
-                    else if (logdata.ToLower().Contains("px4v2") ||
-                             (Regex.IsMatch(logdata, @"\s[0-9A-F]+\s[0-9A-F]+\s[0-9A-F]+") && !logdata.Contains("IOMCU")))
-                    {
-                        MAVlist[sysid, compid].SerialString = logdata;
-                    }
-                    else if (logdata.ToLower().Contains("frame"))
-                    {
-                        MAVlist[sysid, compid].FrameString = logdata;
-                    }
-                    else
-                    {
-                    }
-                }
-
-                return true;
-            }, sysid, (byte)compid);
+            var sub2 = SubscribeToPacketType(MAVLINK_MSG_ID.STATUSTEXT, buffer => ParamListStatusText(buffer, sysid, compid),
+                sysid, (byte)compid);
 
             int seenvalid = 0;
 
@@ -2394,6 +2362,158 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
         }
 
         private int _parampoll = 0;
+
+        // The version strings the vehicle sends as STATUSTEXT along with its parameters.
+        private bool ParamListStatusText(MAVLinkMessage buffer, uint sysid, byte compid)
+        {
+            if (buffer.msgid == (byte) MAVLINK_MSG_ID.STATUSTEXT)
+            {
+                var msg = buffer.ToStructure<mavlink_statustext_t>();
+
+                string logdata = Encoding.UTF8.GetString(msg.text);
+
+                int ind = logdata.IndexOf('\0');
+                if (ind != -1)
+                    logdata = logdata.Substring(0, ind);
+
+                if (logdata.ToLower().Contains("copter") || logdata.ToLower().Contains("rover") ||
+                    logdata.ToLower().Contains("plane"))
+                {
+                    MAVlist[sysid, compid].VersionString = logdata;
+                }
+                else if (logdata.ToLower().Contains("nuttx") || logdata.ToLower().Contains("chibios"))
+                {
+                    MAVlist[sysid, compid].SoftwareVersions = logdata;
+                }
+                else if (logdata.ToLower().Contains("px4v2") ||
+                         (Regex.IsMatch(logdata, @"\s[0-9A-F]+\s[0-9A-F]+\s[0-9A-F]+") && !logdata.Contains("IOMCU")))
+                {
+                    MAVlist[sysid, compid].SerialString = logdata;
+                }
+                else if (logdata.ToLower().Contains("frame"))
+                {
+                    MAVlist[sysid, compid].FrameString = logdata;
+                }
+            }
+
+            return true;
+        }
+
+        // getParamListAsync with the C++ core keeping count and deciding the retries (setting
+        // "mpcore_params", off by default). Everything around that is as in getParamListAsync: the
+        // list it builds, param_types, progress, cancelling and errors.
+        private async Task<MAVLinkParamList> getParamListNativeAsync(uint sysid, byte compid)
+        {
+            // create new list so if canceled we use the old list
+            MAVLinkParamList newparamlist = new MAVLinkParamList();
+            int received = 0;
+
+            using (var download = new MissionPlanner.Mavlink.Native.MpParamDownload(sysid, compid))
+            {
+                download.Send += (msgid, payload) =>
+                {
+                    var type = MAVLINK_MESSAGE_INFOS.GetMessageInfo(msgid).type;
+                    generatePacket((int) msgid, MavlinkUtil.ByteArrayToStructureGC(payload, type, 0, (byte) payload.Length),
+                        sysid, compid);
+                };
+                download.Param += par =>
+                {
+                    newparamlist.TotalReported = par.Count;
+                    if (par.Count == 0)
+                        return;
+                    if (par.Duplicate)
+                    {
+                        log.Info("Already got " + par.Index + " '" + par.Name + "' " + (received * 100) / par.Count);
+                        if (frmProgressReporter != null)
+                            this.frmProgressReporter.UpdateProgressAndStatus((received * 100) / par.Count,
+                                "Already Got param " + par.Name);
+                        return;
+                    }
+
+                    log.Info(DateTime.Now.Millisecond + " got param " + par.Index + " of " + par.Count + " name: " +
+                             par.Name + " " + par.Value);
+
+                    // item uses float based param system
+                    var type = (MAV_PARAM_TYPE) par.Type;
+                    if ((MAVlist[sysid, compid].cs.capabilities & (uint) MAV_PROTOCOL_CAPABILITY.PARAM_FLOAT) > 0 ||
+                        MAVlist[sysid, compid].apname == MAV_AUTOPILOT.ARDUPILOTMEGA)
+                        newparamlist[par.Name] = new MAVLinkParam(par.Name, BitConverter.GetBytes(par.Value),
+                            MAV_PARAM_TYPE.REAL32, type);
+                    else
+                        newparamlist[par.Name] = new MAVLinkParam(par.Name, BitConverter.GetBytes(par.Value), type, type);
+
+                    if (par.Index != 65535)
+                        received++;
+
+                    lock (MAVlist[sysid, compid].param_types)
+                        MAVlist[sysid, compid].param_types[par.Name] = type;
+
+                    if (frmProgressReporter != null)
+                        this.frmProgressReporter.UpdateProgressAndStatus((received * 100) / par.Count,
+                            Strings.Gotparam + par.Name);
+                };
+
+                var sub1 = SubscribeToPacketType(MAVLINK_MSG_ID.PARAM_VALUE, buffer =>
+                {
+                    download.Frame(buffer.buffer);
+                    return true;
+                }, sysid, compid);
+                var sub2 = SubscribeToPacketType(MAVLINK_MSG_ID.STATUSTEXT, buffer => ParamListStatusText(buffer, sysid, compid),
+                    sysid, compid);
+                try
+                {
+                    download.Start();
+                    // the reader may be stopped (giveComport) while connecting, so read here as before
+                    while (!download.Done)
+                    {
+                        if (frmProgressReporter != null && frmProgressReporter.doWorkArgs.CancelRequested)
+                        {
+                            frmProgressReporter.doWorkArgs.CancelAcknowledged = true;
+                            frmProgressReporter.doWorkArgs.ErrorMessage = "User Canceled";
+                            return MAVlist[sysid, compid].param;
+                        }
+
+                        if (!logreadmode)
+                            download.Tick();
+
+                        await readPacketAsync().ConfigureAwait(false);
+
+                        if (logreadmode && logplaybackfile.BaseStream.Position >= logplaybackfile.BaseStream.Length)
+                            break;
+
+                        if (!logreadmode && !BaseStream.IsOpen)
+                        {
+                            var exp = new Exception("Not Connected");
+                            if (frmProgressReporter != null)
+                                frmProgressReporter.doWorkArgs.ErrorMessage = exp.Message;
+                            throw exp;
+                        }
+                    }
+                }
+                finally
+                {
+                    UnSubscribeToPacketType(sub1);
+                    UnSubscribeToPacketType(sub2);
+                }
+
+                var status = download.Status;
+                if (!download.Done)
+                {
+                    var exp = new Exception("Missing Params " + status.received + " vs " + status.total);
+                    if (frmProgressReporter != null)
+                        frmProgressReporter.doWorkArgs.ErrorMessage = exp.Message;
+                    throw exp;
+                }
+
+                log.InfoFormat("list count {0}, rcvd total {1} indexseen count {2}, lists requested {3}, singles {4}",
+                    newparamlist.Count, status.total, status.received, status.full_list_requests, status.single_requests);
+            }
+
+            MAVlist[sysid, compid].param.Clear();
+            MAVlist[sysid, compid].param.TotalReported = newparamlist.TotalReported;
+            MAVlist[sysid, compid].param.AddRange(newparamlist);
+            return MAVlist[sysid, compid].param;
+        }
 
         public void getParamPoll()
         {

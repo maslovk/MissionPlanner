@@ -107,9 +107,35 @@ running meanwhile.
    for now: the core computes the same (shadow mode and the receive tests check it), and it moves
    into the core with the protocols in phase 2, when C# stops needing it, rather than being kept
    in two places meanwhile.
-5. **Then phase 2:** parameter, mission (all three types) and MAVFTP transfers move into the core
-   as state machines with progress and cancellation, replacing the `giveComport` read loops; then
-   `CurrentState`.
+5. **Then phase 2** (below).
+
+## Phase 2: the protocols
+
+The sub-protocols move into the core as state machines with the same shape as `mp_link`: no I/O,
+frames in, messages out through a callback, `tick(now)` for timers. Mission Planner keeps sending
+(through `generatePacket`, so one sequence counter and one signing state), feeds the frames its
+subscriptions see, and keeps everything user-facing (progress, cancelling, errors, where results
+go). Each comes behind its own setting, off by default, with a test that runs the C# and the core
+version against the same simulated vehicle.
+
+1. **Parameter download (done, setting `mpcore_params`).** `ParamDownload`
+   (`src/param_download.*`, C ABI `mp_param_download_*`, C# `MpParamDownload`) does what
+   `getParamListAsync` does: PARAM_REQUEST_LIST, a 4 s quiet timer, the whole list again while
+   under 75 % (twice once the total is known), then up to 10 missing indexes a second, at once if
+   the last index came with gaps, no overall timeout. `getParamListNativeAsync` keeps the rest:
+   it still pumps `readPacketAsync` itself (the reader may be stopped while connecting), builds the
+   `MAVLinkParamList` (float or bytewise per the vehicle's capabilities), `param_types`, progress
+   and the "User Canceled" / "Not Connected" / "Missing Params" outcomes. Mission Planner's "skip a
+   round while the list is still arriving" check never takes effect (it loops straight into the
+   round); the core does the same, as the quiet timer already means the list has stopped.
+   Tests: `tests/test_params.cpp` (a simulated vehicle: loss, silence, gaps, duplicates, 65535,
+   other vehicles, no parameters, 32-bit IDs), the smoke test (the binding), and
+   `MissionPlannerTests/Mavlink/MpCoreParamsTests.cs` (`getParamListAsync` both ways on a vehicle
+   that loses a fifth of the first list: the same list, the same requests).
+2. Parameter set and single read (`setParamAsync`, `GetParamAsync`).
+3. Missions: download and upload for missions, fences and rally points (`mav_mission.cs`).
+4. MAVFTP.
+5. `CurrentState`.
 
 ## Shadow mode
 
