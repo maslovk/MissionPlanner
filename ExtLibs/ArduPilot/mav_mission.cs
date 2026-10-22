@@ -38,16 +38,25 @@ namespace MissionPlanner.ArduPilot
 
                 log.Info("Getting WP # " + type);
 
-                int cmdcount = await port.getWPCountAsync(sysid, compid, type).ConfigureAwait(false);
-
-                for (ushort a = 0; a < cmdcount; a++)
+                if (Settings.Instance.GetBoolean("mpcore_missions", false) &&
+                    MissionPlanner.ArduPilot.Mavlink.MpCoreNativeLoader.Available("missions", log.Info))
                 {
-                    log.Info("Getting WP" + a);
-                    progress?.Invoke((a * 100) / cmdcount, "Getting WP " + a);
-                    commandlist.Add(await port.getWPAsync(sysid, compid, a, type).ConfigureAwait(false));
+                    // the C++ core runs the count, the items and the ACK
+                    commandlist = await port.MissionDownloadNativeAsync(sysid, compid, type, progress).ConfigureAwait(false);
                 }
+                else
+                {
+                    int cmdcount = await port.getWPCountAsync(sysid, compid, type).ConfigureAwait(false);
 
-                port.setWPACK(sysid, compid, type);
+                    for (ushort a = 0; a < cmdcount; a++)
+                    {
+                        log.Info("Getting WP" + a);
+                        progress?.Invoke((a * 100) / cmdcount, "Getting WP " + a);
+                        commandlist.Add(await port.getWPAsync(sysid, compid, a, type).ConfigureAwait(false));
+                    }
+
+                    port.setWPACK(sysid, compid, type);
+                }
 
                 progress?.Invoke(100, "Done");
 

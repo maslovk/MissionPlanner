@@ -143,9 +143,21 @@ version against the same simulated vehicle.
    (mission count and items, home position, commands). Tests: `tests/test_exchange.cpp`, the C ABI
    and smoke tests, and `MpCoreParamsTests.NativeParamSetAndReadBehaveTheSame` (a vehicle that
    ignores the first two sets, reads by name and index, and the timeouts, both ways).
-3. Missions: download and upload for missions, fences and rally points (`mav_mission.cs`).
-4. MAVFTP.
-5. `CurrentState`.
+3. **Mission download (done, setting `mpcore_missions`).** `MissionDownload`
+   (`src/mission_download.*`, C ABI `mp_mission_download_*`, C# `MpMissionDownload`) runs what
+   `mav_mission.download` does with `getWPCountAsync` and `getWPAsync`: MISSION_REQUEST_LIST (700 ms,
+   6 resends), each item by MISSION_REQUEST_INT or, without the vehicle's MISSION_INT capability,
+   MISSION_REQUEST (2.5 s, 5 resends, at once again for a stale seq), and the MISSION_ACK. Replies
+   must be for this GCS (`IsTargetedTo`) and, unlike the C# loops, of the mission type asked for (a
+   fence count can no longer be taken for the mission's), and a request asked again keeps its kind
+   (the C# loop falls back to MISSION_REQUEST after a MISSION_ITEM). `MissionDownloadNativeAsync`
+   turns the item frames into `Locationwp` with the same conversion as `getWPAsync`
+   (`LocationFromItem`, now shared). Tests: `tests/test_mission.cpp`, the smoke test and
+   `MissionPlannerTests/Mavlink/MpCoreMissionTests.cs` (both ways, with and without MISSION_INT, a
+   lost count and a stale item: the same items, requests and ACK).
+4. Mission upload (`mav_mission.upload`, with its partial-list and INVALID_SEQUENCE recovery).
+5. MAVFTP.
+6. `CurrentState`.
 
 ## Shadow mode
 

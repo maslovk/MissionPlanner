@@ -3859,16 +3859,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                             continue;
                         }
 
-                        loc.frame = wp.frame;
-                        loc.id = (ushort) (wp.command);
-                        loc.p1 = (wp.param1);
-                        loc.p2 = (wp.param2);
-                        loc.p3 = (wp.param3);
-                        loc.p4 = (wp.param4);
-
-                        loc.alt = ((wp.z));
-                        loc.lat = ((wp.x));
-                        loc.lng = ((wp.y));
+                        loc = LocationFromItem(buffer);
 
                         log.InfoFormat("getWP {0} {1} {2} {3} {4} opt {5}", loc.id, loc.p1, loc.alt, loc.lat, loc.lng,
                             loc.frame);
@@ -3892,22 +3883,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                             continue;
                         }
 
-                        loc.frame = wp.frame;
-                        loc.id = (ushort) (wp.command);
-                        loc.p1 = (wp.param1);
-                        loc.p2 = (wp.param2);
-                        loc.p3 = (wp.param3);
-                        loc.p4 = (wp.param4);
-
-                        loc.alt = ((wp.z));
-                        loc.lat = ((wp.x / 1.0e7));
-                        loc.lng = ((wp.y / 1.0e7));
-
-                        if (!Locationwp.isLocationCommand(loc.id))
-                        {
-                            loc.lat = wp.x;
-                            loc.lng = wp.y;
-                        }
+                        loc = LocationFromItem(buffer);
 
                         log.InfoFormat("getWPint {0} {1} {2} {3} {4} opt {5}", loc.id, loc.p1, loc.alt, loc.lat,
                             loc.lng,
@@ -3924,6 +3900,110 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
 
             giveComport = false;
             return loc;
+        }
+
+        // getWPAsync's reading of a MISSION_ITEM or MISSION_ITEM_INT: INT coordinates are 1e7 degrees
+        // for location commands and plain numbers otherwise.
+        private static Locationwp LocationFromItem(MAVLinkMessage buffer)
+        {
+            var loc = new Locationwp();
+            if (buffer.msgid == (uint) MAVLINK_MSG_ID.MISSION_ITEM_INT)
+            {
+                var wp = buffer.ToStructure<mavlink_mission_item_int_t>();
+                loc.frame = wp.frame;
+                loc.id = (ushort) (wp.command);
+                loc.p1 = (wp.param1);
+                loc.p2 = (wp.param2);
+                loc.p3 = (wp.param3);
+                loc.p4 = (wp.param4);
+
+                loc.alt = ((wp.z));
+                loc.lat = ((wp.x / 1.0e7));
+                loc.lng = ((wp.y / 1.0e7));
+
+                if (!Locationwp.isLocationCommand(loc.id))
+                {
+                    loc.lat = wp.x;
+                    loc.lng = wp.y;
+                }
+            }
+            else
+            {
+                var wp = buffer.ToStructure<mavlink_mission_item_t>();
+                loc.frame = wp.frame;
+                loc.id = (ushort) (wp.command);
+                loc.p1 = (wp.param1);
+                loc.p2 = (wp.param2);
+                loc.p3 = (wp.param3);
+                loc.p4 = (wp.param4);
+
+                loc.alt = ((wp.z));
+                loc.lat = ((wp.x));
+                loc.lng = ((wp.y));
+            }
+
+            return loc;
+        }
+
+        /// <summary>
+        /// mav_mission.download's count, items and ACK run by the C++ core (setting "mpcore_missions",
+        /// off by default): MISSION_REQUEST_LIST and the items with getWPCountAsync's and getWPAsync's
+        /// timeouts, replies for this GCS and of this mission type only.
+        /// </summary>
+        public async Task<List<Locationwp>> MissionDownloadNativeAsync(uint sysid, byte compid, MAV_MISSION_TYPE type,
+            Action<int, string> progress = null)
+        {
+            bool use_int = (MAVlist[sysid, compid].cs.capabilities & (uint) MAV_PROTOCOL_CAPABILITY.MISSION_INT) > 0;
+            giveComport = true;
+            var subs = new List<int>();
+            try
+            {
+                using (var download = new MissionPlanner.Mavlink.Native.MpMissionDownload(sysid, compid, gcssysid,
+                    (byte) MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER, (byte) type, use_int,
+                    (msgid, payload) => SendPayload(msgid, payload, sysid, compid)))
+                {
+                    foreach (var reply in new[]
+                                 { MAVLINK_MSG_ID.MISSION_COUNT, MAVLINK_MSG_ID.MISSION_ITEM, MAVLINK_MSG_ID.MISSION_ITEM_INT })
+                        subs.Add(SubscribeToPacketType(reply, buffer =>
+                        {
+                            download.Frame(buffer.buffer);
+                            return true;
+                        }, sysid, compid));
+
+                    download.Start();
+                    int reported = -1;
+                    while (true)
+                    {
+                        var state = download.Tick();
+                        if (state == MissionPlanner.Mavlink.Native.MpMissionDownload.Result.Done)
+                            break;
+                        if (state == MissionPlanner.Mavlink.Native.MpMissionDownload.Result.Failed)
+                            throw new TimeoutException(download.Count < 0
+                                ? "Timeout on read - getWPCount"
+                                : "Timeout on read - getWP");
+
+                        int count = download.Count;
+                        int received = download.Received;
+                        if (count > 0 && received != reported && received < count)
+                        {
+                            reported = received;
+                            log.Info("Getting WP" + received);
+                            progress?.Invoke((received * 100) / count, "Getting WP " + received);
+                        }
+
+                        await readPacketAsync().ConfigureAwait(false);
+                    }
+
+                    log.Info("wpcount: " + download.Count);
+                    return download.Items.Select(frame => LocationFromItem(new MAVLinkMessage(frame))).ToList();
+                }
+            }
+            finally
+            {
+                foreach (var sub in subs)
+                    UnSubscribeToPacketType(sub);
+                giveComport = false;
+            }
         }
 
         public object DebugPacket(MAVLinkMessage datin)

@@ -42,7 +42,7 @@ jobs:
           MPCORE_REQUIRED: '1' # the MpCore*Tests fail rather than skip without the native library
         run: |
           . .github/scripts/run-annotated.ps1
-          $out = Invoke-Annotated { dotnet test MissionPlannerTests/MissionPlannerTests.csproj --configuration Release --filter "FullyQualifiedName~Sysid32Tests|FullyQualifiedName~MpCoreReceiveTests|FullyQualifiedName~MpCoreSendTests|FullyQualifiedName~MpCoreParamsTests" --logger "trx;LogFileName=sysid32.trx" --logger "console;verbosity=normal" }
+          $out = Invoke-Annotated { dotnet test MissionPlannerTests/MissionPlannerTests.csproj --configuration Release --filter "FullyQualifiedName~Sysid32Tests|FullyQualifiedName~MpCoreReceiveTests|FullyQualifiedName~MpCoreSendTests|FullyQualifiedName~MpCoreParamsTests|FullyQualifiedName~MpCoreMissionTests" --logger "trx;LogFileName=sysid32.trx" --logger "console;verbosity=normal" }
           # which tests ran, readable without a login
           $summary = ($out | Select-String -Pattern '^\s*(Passed|Failed|Skipped) [A-Za-z]|Total tests|Passed!|Failed!' | ForEach-Object { $_.Line.Trim() }) -join "`n"
           Write-Host "::notice title=MAVLink tests::$(ConvertTo-AnnotationText $summary)"
