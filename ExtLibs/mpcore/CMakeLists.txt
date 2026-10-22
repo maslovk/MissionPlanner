@@ -46,6 +46,7 @@ endfunction()
 add_library(mpcore_core STATIC
     src/exchange.cpp
     src/frame_parser.cpp
+    src/ftp.cpp
     src/link.cpp
     src/mission_download.cpp
     src/mission_upload.cpp

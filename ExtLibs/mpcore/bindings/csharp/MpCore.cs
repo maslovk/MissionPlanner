@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace MissionPlanner.Mavlink.Native
 {
@@ -292,6 +293,108 @@ namespace MissionPlanner.Mavlink.Native
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern int mp_mission_upload_highest_requested(IntPtr upload);
+
+        public const int MP_FTP_RUNNING = 0;
+        public const int MP_FTP_DONE = 1;
+        public const int MP_FTP_FAILED = 2;
+        public const int MP_FTP_MAX_DATA = 239;
+
+        public const byte MP_FTP_TERMINATE_SESSION = 1;
+        public const byte MP_FTP_RESET_SESSIONS = 2;
+        public const byte MP_FTP_REMOVE_FILE = 8;
+        public const byte MP_FTP_CREATE_DIRECTORY = 9;
+        public const byte MP_FTP_REMOVE_DIRECTORY = 10;
+        public const byte MP_FTP_TRUNCATE_FILE = 12;
+        public const byte MP_FTP_RENAME = 13;
+        public const byte MP_FTP_CALC_FILE_CRC32 = 14;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct mp_ftp_entry
+        {
+            public uint struct_size;
+            public byte kind;
+            public byte reserved0, reserved1, reserved2;
+            public uint mtime;
+            public uint reserved3;
+            public ulong size;
+        }
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern IntPtr mp_ftp_create(uint sysid, byte compid, uint gcs_sysid, byte gcs_compid,
+            mp_message_fn send, IntPtr user);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mp_ftp_destroy(IntPtr ftp);
+
+        // paths: NUL-terminated UTF-8
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_get_file(IntPtr ftp, byte[] path, byte read_size, int burst, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_put_file(IntPtr ftp, byte[] path, byte[] data, UIntPtr len, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_list(IntPtr ftp, byte[] dir, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_command(IntPtr ftp, byte opcode, byte[] path, byte[] path2, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_cancel(IntPtr ftp);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_frame(IntPtr ftp, byte[] frame, UIntPtr len, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_tick(IntPtr ftp, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_nak(IntPtr ftp);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_nak_errno(IntPtr ftp);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_nak_opcode(IntPtr ftp);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_opcode(IntPtr ftp);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern uint mp_ftp_value(IntPtr ftp);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern long mp_ftp_file_size(IntPtr ftp);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern ulong mp_ftp_progress(IntPtr ftp);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern UIntPtr mp_ftp_data(IntPtr ftp, byte[] output, UIntPtr capacity);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern UIntPtr mp_ftp_entry_count(IntPtr ftp);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_entry_get(IntPtr ftp, UIntPtr index, ref mp_ftp_entry entry);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_entry_name(IntPtr ftp, UIntPtr index, byte[] output, UIntPtr capacity);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern ushort mp_ftp_next_seq(IntPtr ftp);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mp_ftp_set_next_seq(IntPtr ftp, ushort seq);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern uint mp_ftp_requests_sent(IntPtr ftp);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_ftp_plain_listing(IntPtr ftp);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mp_ftp_set_plain_listing(IntPtr ftp, int plain);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern uint mp_abi_version();
@@ -1032,6 +1135,227 @@ namespace MissionPlanner.Mavlink.Native
             GC.KeepAlive(_onFrame);
             GC.KeepAlive(_onWrite);
             GC.KeepAlive(_onText);
+        }
+    }
+
+    /// <summary>
+    /// MAVLink FTP, one operation at a time (see mp_ftp in mpcore.h). Thread-safe like
+    /// MpParamDownload: frames may come from the reader thread while another thread ticks.
+    /// </summary>
+    public sealed class MpFtp : IDisposable
+    {
+        public enum Result
+        {
+            Running = MpCoreNative.MP_FTP_RUNNING,
+            Done = MpCoreNative.MP_FTP_DONE,
+            Failed = MpCoreNative.MP_FTP_FAILED,
+        }
+
+        public struct Entry
+        {
+            /// <summary>'F' file, 'D' directory, 'S' an entry the vehicle skipped</summary>
+            public char Kind;
+            public string Name;
+            public ulong Size;
+            /// <summary>seconds since 1970 (UTC), 0 if not known</summary>
+            public uint MTime;
+        }
+
+        readonly object _sync = new object();
+        readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        readonly MpCoreNative.mp_message_fn _onSend;
+        readonly Action<uint, byte[]> _send;
+        IntPtr _ftp;
+
+        public MpFtp(uint sysId, byte compId, uint gcsSysId, byte gcsCompId, Action<uint, byte[]> send)
+        {
+            _send = send;
+            _onSend = OnSend;
+            _ftp = MpCoreNative.mp_ftp_create(sysId, compId, gcsSysId, gcsCompId, _onSend, IntPtr.Zero);
+            if (_ftp == IntPtr.Zero)
+                throw new InvalidOperationException("mp_ftp_create failed");
+        }
+
+        long NowUs => _clock.Elapsed.Ticks / (TimeSpan.TicksPerMillisecond / 1000);
+
+        static byte[] Path(string path) => path == null ? null : Encoding.UTF8.GetBytes(path + "\0");
+
+        bool Ok(Func<IntPtr, int> start)
+        {
+            lock (_sync)
+                return _ftp != IntPtr.Zero && start(_ftp) == MpCoreNative.MP_OK;
+        }
+
+        /// <summary>Starts a download; false while an operation runs or for a path too long.</summary>
+        public bool GetFile(string path, byte readSize, bool burst) =>
+            Ok(f => MpCoreNative.mp_ftp_get_file(f, Path(path), readSize, burst ? 1 : 0, NowUs));
+
+        public bool PutFile(string path, byte[] data) =>
+            Ok(f => MpCoreNative.mp_ftp_put_file(f, Path(path), data, (UIntPtr)data.Length, NowUs));
+
+        public bool List(string dir) => Ok(f => MpCoreNative.mp_ftp_list(f, Path(dir), NowUs));
+
+        /// <summary>One of the MpCoreNative.MP_FTP_* commands.</summary>
+        public bool Command(byte opcode, string path, string path2 = null) =>
+            Ok(f => MpCoreNative.mp_ftp_command(f, opcode, Path(path ?? ""), Path(path2), NowUs));
+
+        public void Cancel()
+        {
+            lock (_sync)
+                if (_ftp != IntPtr.Zero)
+                    MpCoreNative.mp_ftp_cancel(_ftp);
+        }
+
+        public void Frame(byte[] frame)
+        {
+            if (frame == null || frame.Length == 0)
+                return;
+            lock (_sync)
+                if (_ftp != IntPtr.Zero)
+                    MpCoreNative.mp_ftp_frame(_ftp, frame, (UIntPtr)frame.Length, NowUs);
+        }
+
+        public Result Tick()
+        {
+            lock (_sync)
+                return _ftp == IntPtr.Zero ? Result.Failed : (Result)MpCoreNative.mp_ftp_tick(_ftp, NowUs);
+        }
+
+        int Get(Func<IntPtr, int> get)
+        {
+            lock (_sync)
+                return _ftp == IntPtr.Zero ? 0 : get(_ftp);
+        }
+
+        /// <summary>Once failed: the NAK code (0: a timeout or a cancel), its errno and the opcode it answered.</summary>
+        public int Nak => Get(MpCoreNative.mp_ftp_nak);
+        public int NakErrno => Get(MpCoreNative.mp_ftp_nak_errno);
+        public int NakOpcode => Get(MpCoreNative.mp_ftp_nak_opcode);
+        /// <summary>The request being sent, the last one once finished.</summary>
+        public int Opcode => Get(MpCoreNative.mp_ftp_opcode);
+
+        public uint Value
+        {
+            get
+            {
+                lock (_sync)
+                    return _ftp == IntPtr.Zero ? 0 : MpCoreNative.mp_ftp_value(_ftp);
+            }
+        }
+
+        /// <summary>A download: the size opened (-1 before), cut to where the file ended.</summary>
+        public long FileSize
+        {
+            get
+            {
+                lock (_sync)
+                    return _ftp == IntPtr.Zero ? -1 : MpCoreNative.mp_ftp_file_size(_ftp);
+            }
+        }
+
+        /// <summary>A download: bytes received; an upload: bytes acknowledged.</summary>
+        public ulong Progress
+        {
+            get
+            {
+                lock (_sync)
+                    return _ftp == IntPtr.Zero ? 0 : MpCoreNative.mp_ftp_progress(_ftp);
+            }
+        }
+
+        public uint RequestsSent
+        {
+            get
+            {
+                lock (_sync)
+                    return _ftp == IntPtr.Zero ? 0 : MpCoreNative.mp_ftp_requests_sent(_ftp);
+            }
+        }
+
+        /// <summary>The seq of the next request, shared with code that sends FTP requests itself.</summary>
+        public ushort NextSeq
+        {
+            get
+            {
+                lock (_sync)
+                    return _ftp == IntPtr.Zero ? (ushort)0 : MpCoreNative.mp_ftp_next_seq(_ftp);
+            }
+            set
+            {
+                lock (_sync)
+                    if (_ftp != IntPtr.Zero)
+                        MpCoreNative.mp_ftp_set_next_seq(_ftp, value);
+            }
+        }
+
+        /// <summary>Listings are plain: the vehicle NAKed a timed one. Kept by the caller across objects.</summary>
+        public bool PlainListing
+        {
+            get
+            {
+                lock (_sync)
+                    return _ftp != IntPtr.Zero && MpCoreNative.mp_ftp_plain_listing(_ftp) == 1;
+            }
+            set
+            {
+                lock (_sync)
+                    if (_ftp != IntPtr.Zero)
+                        MpCoreNative.mp_ftp_set_plain_listing(_ftp, value ? 1 : 0);
+            }
+        }
+
+        /// <summary>A finished download.</summary>
+        public byte[] Data()
+        {
+            lock (_sync)
+            {
+                if (_ftp == IntPtr.Zero)
+                    return new byte[0];
+                var data = new byte[(int)MpCoreNative.mp_ftp_data(_ftp, null, UIntPtr.Zero)];
+                MpCoreNative.mp_ftp_data(_ftp, data, (UIntPtr)data.Length);
+                return data;
+            }
+        }
+
+        /// <summary>A listing's entries.</summary>
+        public Entry[] Entries()
+        {
+            lock (_sync)
+            {
+                if (_ftp == IntPtr.Zero)
+                    return new Entry[0];
+                var count = (int)MpCoreNative.mp_ftp_entry_count(_ftp);
+                var entries = new Entry[count];
+                for (int i = 0; i < count; i++)
+                {
+                    var e = new MpCoreNative.mp_ftp_entry { struct_size = (uint)Marshal.SizeOf(typeof(MpCoreNative.mp_ftp_entry)) };
+                    MpCoreNative.mp_ftp_entry_get(_ftp, (UIntPtr)i, ref e);
+                    var name = new byte[Math.Max(0, MpCoreNative.mp_ftp_entry_name(_ftp, (UIntPtr)i, null, UIntPtr.Zero))];
+                    MpCoreNative.mp_ftp_entry_name(_ftp, (UIntPtr)i, name, (UIntPtr)name.Length);
+                    entries[i] = new Entry { Kind = (char)e.kind, Name = Encoding.UTF8.GetString(name), Size = e.size, MTime = e.mtime };
+                }
+
+                return entries;
+            }
+        }
+
+        void OnSend(IntPtr user, uint msgid, IntPtr payload, UIntPtr len)
+        {
+            var bytes = new byte[(int)len];
+            Marshal.Copy(payload, bytes, 0, bytes.Length);
+            try { _send?.Invoke(msgid, bytes); } catch (Exception ex) { Console.Error.WriteLine("mpcore ftp Send: " + ex); }
+        }
+
+        public void Dispose()
+        {
+            lock (_sync)
+            {
+                if (_ftp != IntPtr.Zero)
+                    MpCoreNative.mp_ftp_destroy(_ftp);
+                _ftp = IntPtr.Zero;
+            }
+
+            GC.KeepAlive(_onSend);
         }
     }
 }

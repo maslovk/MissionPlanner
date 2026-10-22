@@ -305,6 +305,71 @@ static class MpCoreSmoke
         }
     }
 
+    // an FTP reply to the last request: opcode 128 ACK / 129 NAK
+    static byte[] FtpReply(byte[] request, byte opcode, int seqAdd, uint offset, byte[] data, bool burstComplete = false)
+    {
+        var p = new byte[254];
+        p[1] = 255;
+        p[2] = 190;
+        var seq = (ushort)(request[3] | (request[4] << 8));
+        seq = (ushort)(seq + seqAdd);
+        p[3] = (byte)seq;
+        p[4] = (byte)(seq >> 8);
+        p[6] = opcode;
+        p[7] = (byte)data.Length;
+        p[8] = request[6];
+        p[9] = (byte)(burstComplete ? 1 : 0);
+        BitConverter.GetBytes(offset).CopyTo(p, 11);
+        data.CopyTo(p, 15);
+        return Encode(110, p);
+    }
+
+    // MAVLink FTP through the binding: a download in two packets and a listing
+    static void Ftp()
+    {
+        byte[] last = null;
+        using (var ftp = new MpFtp(1, 1, 255, 190, (msgid, payload) => { if (msgid == 110) last = payload; }))
+        {
+            var file = new byte[150];
+            for (int i = 0; i < file.Length; i++)
+                file[i] = (byte)(i * 3);
+            Check(ftp.GetFile("/f", 100, true) && last[6] == MpCoreNative.MP_FTP_RESET_SESSIONS, "reset first");
+            ftp.Frame(FtpReply(last, 128, 1, 0, new byte[0]));
+            Check(last[6] == 4 && System.Text.Encoding.ASCII.GetString(last, 15, 2) == "/f", "open");
+            ftp.Frame(FtpReply(last, 128, 1, 0, BitConverter.GetBytes(150)));
+            Check(ftp.FileSize == 150 && last[6] == 15, "burst");
+            var first = new byte[100];
+            Array.Copy(file, first, 100);
+            var second = new byte[50];
+            Array.Copy(file, 100, second, 0, 50);
+            ftp.Frame(FtpReply(last, 128, 1, 0, first));
+            ftp.Frame(FtpReply(last, 128, 2, 100, second, true));
+            Check(ftp.Tick() == MpFtp.Result.Done && ftp.Progress == 150, "downloaded");
+            var data = ftp.Data();
+            bool same = data.Length == file.Length;
+            for (int i = 0; same && i < data.Length; i++)
+                same = data[i] == file[i];
+            Check(same, "the file");
+
+            Check(ftp.List("/"), "list");
+            var listing = System.Text.Encoding.UTF8.GetBytes("Fкарта.txt\t12\t1600000000\0Dsub\0");
+            ftp.Frame(FtpReply(last, 128, 1, 0, listing));
+            ftp.Frame(FtpReply(last, 129, 1, 0, new byte[] { 6 }));
+            var entries = ftp.Entries();
+            Check(ftp.Tick() == MpFtp.Result.Done && entries.Length == 2, "two entries");
+            Check(entries[0].Kind == 'F' && entries[0].Name == "карта.txt" && entries[0].Size == 12 &&
+                  entries[0].MTime == 1600000000u, "a file, UTF-8 name");
+            Check(entries[1].Kind == 'D' && entries[1].Name == "sub", "a directory");
+
+            Check(ftp.Command(MpCoreNative.MP_FTP_REMOVE_FILE, "/x"), "remove");
+            ftp.Frame(FtpReply(last, 129, 1, 0, new byte[] { 2, 2 }));
+            Check(ftp.Tick() == MpFtp.Result.Failed && ftp.Nak == 2 && ftp.NakErrno == 2 &&
+                  ftp.NakOpcode == MpCoreNative.MP_FTP_REMOVE_FILE, "errno NAK");
+            ftp.NextSeq = 1000;
+            Check(ftp.NextSeq == 1000, "seq shared");
+        }
+    }
+
     static int Main()
     {
         Layouts();
@@ -313,6 +378,7 @@ static class MpCoreSmoke
         Exchange();
         Missions();
         Upload();
+        Ftp();
         RoundTrip();
         Signing();
         Console.WriteLine((failures == 0 ? "ok" : "FAIL") + " (" + failures + " failed checks, " + IntPtr.Size * 8 + "-bit)");

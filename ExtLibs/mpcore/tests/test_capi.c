@@ -343,6 +343,114 @@ static void test_exchange(void) {
     mp_exchange_destroy(NULL);
 }
 
+typedef struct ftp_capture {
+    uint8_t last[254];
+    int sent;
+} ftp_capture;
+
+static void MPCORE_CALL ftp_send(void *user, uint32_t msgid, const uint8_t *payload, size_t len) {
+    ftp_capture *c = (ftp_capture *)user;
+    if (msgid == 110 && len == sizeof(c->last))
+        memcpy(c->last, payload, len);
+    c->sent++;
+}
+
+/* a FILE_TRANSFER_PROTOCOL reply from sysid 1 compid 1 to the last request */
+static int ftp_reply(uint8_t *frame, const ftp_capture *c, uint8_t opcode, uint16_t seq_add, uint32_t offset,
+                     const void *data, uint8_t size, uint8_t burst_complete) {
+    uint8_t payload[254];
+    mp_encode_args args;
+    uint16_t seq = (uint16_t)(c->last[3] | (c->last[4] << 8));
+    memset(payload, 0, sizeof(payload));
+    payload[1] = 255;
+    payload[2] = 190;
+    seq = (uint16_t)(seq + seq_add);
+    memcpy(payload + 3, &seq, 2);
+    payload[3 + 3] = opcode;
+    payload[3 + 4] = size;
+    payload[3 + 5] = c->last[3 + 3];
+    payload[3 + 6] = burst_complete;
+    memcpy(payload + 3 + 8, &offset, 4);
+    if (size > 0)
+        memcpy(payload + 3 + 12, data, size);
+    memset(&args, 0, sizeof(args));
+    args.struct_size = sizeof(args);
+    args.msgid = 110;
+    args.src_sysid = 1;
+    args.src_compid = 1;
+    return mp_frame_encode(&args, payload, sizeof(payload), frame, MPCORE_MAX_FRAME_LEN);
+}
+
+static void test_ftp(void) {
+    ftp_capture c;
+    uint8_t frame[MPCORE_MAX_FRAME_LEN];
+    uint8_t file[150], got[200];
+    uint32_t size = sizeof(file);
+    static const char listing[] = "Fa.txt\t12\t1600000000\0Dsub\t0\t0";
+    mp_ftp_entry entry;
+    char name[16];
+    int n, i;
+    mp_ftp *f;
+    memset(&c, 0, sizeof(c));
+    for (i = 0; i < (int)sizeof(file); i++)
+        file[i] = (uint8_t)(i * 7);
+
+    f = mp_ftp_create(1, 1, 255, 190, ftp_send, &c);
+    CHECK(f != NULL);
+    CHECK(mp_ftp_get_file(f, "/f", 100, 1, 0) == MP_OK && c.sent == 1 && c.last[3 + 3] == MP_FTP_RESET_SESSIONS);
+    CHECK(mp_ftp_get_file(f, "/f", 100, 1, 0) == MP_ERR_ARGUMENT); /* one at a time */
+    n = ftp_reply(frame, &c, 128, 1, 0, NULL, 0, 0);
+    mp_ftp_frame(f, frame, (size_t)n, 1000);
+    CHECK(c.last[3 + 3] == MP_FTP_OPEN_FILE_RO && memcmp(c.last + 3 + 12, "/f", 3) == 0);
+    n = ftp_reply(frame, &c, 128, 1, 0, &size, 4, 0);
+    mp_ftp_frame(f, frame, (size_t)n, 2000);
+    CHECK(mp_ftp_file_size(f) == 150 && c.last[3 + 3] == MP_FTP_BURST_READ_FILE && c.last[3 + 4] == 100);
+    n = ftp_reply(frame, &c, 128, 1, 0, file, 100, 0);
+    mp_ftp_frame(f, frame, (size_t)n, 3000);
+    CHECK(mp_ftp_tick(f, 3000) == MP_FTP_RUNNING && mp_ftp_progress(f) == 100);
+    n = ftp_reply(frame, &c, 128, 2, 100, file + 100, 50, 1);
+    mp_ftp_frame(f, frame, (size_t)n, 4000);
+    CHECK(mp_ftp_tick(f, 4000) == MP_FTP_DONE);
+    CHECK(mp_ftp_data(f, NULL, 0) == 150 && mp_ftp_data(f, got, sizeof(got)) == 150 && memcmp(got, file, 150) == 0);
+
+    CHECK(mp_ftp_list(f, "/", 5000) == MP_OK && c.last[3 + 3] == MP_FTP_LIST_DIRECTORY_WITH_TIME);
+    n = ftp_reply(frame, &c, 128, 1, 0, listing, (uint8_t)sizeof(listing), 0);
+    mp_ftp_frame(f, frame, (size_t)n, 6000);
+    CHECK(c.last[3 + 3] == MP_FTP_LIST_DIRECTORY_WITH_TIME && c.last[3 + 8] == 2); /* the next page */
+    {
+        static const uint8_t eof = MP_FTP_ERR_EOF;
+        n = ftp_reply(frame, &c, 129, 1, 0, &eof, 1, 0);
+    }
+    mp_ftp_frame(f, frame, (size_t)n, 7000);
+    CHECK(mp_ftp_tick(f, 7000) == MP_FTP_DONE && mp_ftp_entry_count(f) == 2);
+    memset(&entry, 0, sizeof(entry));
+    CHECK(mp_ftp_entry_get(f, 0, &entry) == MP_ERR_ARGUMENT); /* struct_size */
+    entry.struct_size = sizeof(entry);
+    CHECK(mp_ftp_entry_get(f, 0, &entry) == MP_OK && entry.kind == 'F' && entry.size == 12 &&
+          entry.mtime == 1600000000u);
+    CHECK(mp_ftp_entry_name(f, 0, name, sizeof(name)) == 5 && memcmp(name, "a.txt", 5) == 0);
+    CHECK(mp_ftp_entry_get(f, 1, &entry) == MP_OK && entry.kind == 'D' && entry.mtime == 0);
+    CHECK(mp_ftp_entry_get(f, 2, &entry) == MP_ERR_ARGUMENT);
+
+    CHECK(mp_ftp_command(f, MP_FTP_REMOVE_FILE, "/x", NULL, 8000) == MP_OK);
+    {
+        static const uint8_t enoent[2] = {MP_FTP_ERR_FAIL_ERRNO, 2};
+        n = ftp_reply(frame, &c, 129, 1, 0, enoent, 2, 0);
+    }
+    mp_ftp_frame(f, frame, (size_t)n, 9000);
+    CHECK(mp_ftp_tick(f, 9000) == MP_FTP_FAILED && mp_ftp_nak(f) == MP_FTP_ERR_FAIL_ERRNO &&
+          mp_ftp_nak_errno(f) == 2 && mp_ftp_nak_opcode(f) == MP_FTP_REMOVE_FILE);
+    CHECK(mp_ftp_command(f, MP_FTP_OPEN_FILE_RO, "/x", NULL, 0) == MP_ERR_ARGUMENT);
+    CHECK(mp_ftp_plain_listing(f) == 0);
+    mp_ftp_set_plain_listing(f, 1);
+    CHECK(mp_ftp_plain_listing(f) == 1);
+    mp_ftp_set_next_seq(f, 500);
+    CHECK(mp_ftp_next_seq(f) == 500 && mp_ftp_requests_sent(f) == (uint32_t)c.sent);
+    mp_ftp_destroy(f);
+    CHECK(mp_ftp_tick(NULL, 0) == MP_ERR_ARGUMENT);
+    mp_ftp_destroy(NULL);
+}
+
 int main(void) {
     test_version_and_messages();
     test_round_trip();
@@ -350,6 +458,7 @@ int main(void) {
     test_frame_encode();
     test_param_download();
     test_exchange();
+    test_ftp();
     printf("%s (%d failed checks)\n", failures == 0 ? "ok" : "FAIL", failures);
     return failures == 0 ? 0 : 1;
 }

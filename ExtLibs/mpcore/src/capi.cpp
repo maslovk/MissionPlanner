@@ -6,6 +6,7 @@
 #include <new>
 
 #include "exchange.hpp"
+#include "ftp.hpp"
 #include "link.hpp"
 #include "mission_download.hpp"
 #include "mission_upload.hpp"
@@ -48,6 +49,15 @@ struct mp_mission_upload {
     std::unique_ptr<mpcore::MissionUpload> upload;
 };
 
+struct mp_ftp {
+    mp_ftp(uint32_t sysid, uint8_t compid, uint32_t gcs_sysid, uint8_t gcs_compid, mp_message_fn send, void *user)
+        : ftp(sysid, compid, gcs_sysid, gcs_compid, [send, user](uint32_t msgid, const uint8_t *payload, std::size_t len) {
+              if (send)
+                  send(user, msgid, payload, len);
+          }) {}
+    mpcore::Ftp ftp;
+};
+
 struct mp_param_download {
     mp_param_download(uint32_t sysid, uint8_t compid, mp_message_fn send, mp_param_fn on_param, void *user)
         : download(
@@ -76,6 +86,8 @@ struct mp_param_download {
 static_assert(offsetof(mp_encode_args, timestamp) == 32, "mp_encode_args.timestamp moved");
 static_assert(offsetof(mp_encode_args, key) == 40, "mp_encode_args.key moved");
 static_assert(MPCORE_MAX_FRAME_LEN == mpcore::kMaxFrameLen, "MPCORE_MAX_FRAME_LEN is wrong");
+static_assert(sizeof(mp_ftp_entry) == 24 && offsetof(mp_ftp_entry, size) == 16, "mp_ftp_entry moved");
+static_assert(MP_FTP_MAX_DATA == mpcore::Ftp::kMaxData, "MP_FTP_MAX_DATA is wrong");
 static_assert(offsetof(mp_param, value) == 2 * sizeof(void *), "mp_param.value moved");
 
 namespace {
@@ -630,6 +642,185 @@ MPCORE_API int MPCORE_CALL mp_mission_upload_count_accepted(mp_mission_upload *u
 
 MPCORE_API int MPCORE_CALL mp_mission_upload_highest_requested(mp_mission_upload *upload) {
     return upload == nullptr || !upload->upload ? -1 : upload->upload->highest_requested();
+}
+
+MPCORE_API mp_ftp *MPCORE_CALL mp_ftp_create(uint32_t sysid, uint8_t compid, uint32_t gcs_sysid,
+                                             uint8_t gcs_compid, mp_message_fn send, void *user) {
+    try {
+        return new mp_ftp(sysid, compid, gcs_sysid, gcs_compid, send, user);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+MPCORE_API void MPCORE_CALL mp_ftp_destroy(mp_ftp *ftp) {
+    delete ftp;
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_get_file(mp_ftp *ftp, const char *path, uint8_t read_size, int burst,
+                                           int64_t now_us) {
+    if (ftp == nullptr || path == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        return ftp->ftp.get_file(path, read_size, burst != 0, now_us) ? MP_OK : MP_ERR_ARGUMENT;
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_put_file(mp_ftp *ftp, const char *path, const void *data, size_t len,
+                                           int64_t now_us) {
+    if (ftp == nullptr || path == nullptr || (data == nullptr && len != 0))
+        return MP_ERR_ARGUMENT;
+    try {
+        const auto *p = static_cast<const uint8_t *>(data);
+        return ftp->ftp.put_file(path, std::vector<uint8_t>(p, p + len), now_us) ? MP_OK : MP_ERR_ARGUMENT;
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_list(mp_ftp *ftp, const char *dir, int64_t now_us) {
+    if (ftp == nullptr || dir == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        return ftp->ftp.list(dir, now_us) ? MP_OK : MP_ERR_ARGUMENT;
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_command(mp_ftp *ftp, uint8_t opcode, const char *path, const char *path2,
+                                          int64_t now_us) {
+    if (ftp == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        return ftp->ftp.command(opcode, path != nullptr ? path : "", path2 != nullptr ? path2 : "", now_us)
+                   ? MP_OK
+                   : MP_ERR_ARGUMENT;
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_cancel(mp_ftp *ftp) {
+    if (ftp == nullptr)
+        return MP_ERR_ARGUMENT;
+    ftp->ftp.cancel();
+    return MP_OK;
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_frame(mp_ftp *ftp, const uint8_t *frame, size_t len, int64_t now_us) {
+    if (ftp == nullptr || frame == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        ftp->ftp.on_frame(frame, len, now_us);
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+    return MP_OK;
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_tick(mp_ftp *ftp, int64_t now_us) {
+    if (ftp == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        switch (ftp->ftp.tick(now_us)) {
+        case mpcore::Ftp::State::Done:
+            return MP_FTP_DONE;
+        case mpcore::Ftp::State::Failed:
+            return MP_FTP_FAILED;
+        default:
+            return MP_FTP_RUNNING;
+        }
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_nak(mp_ftp *ftp) {
+    return ftp == nullptr ? MP_ERR_ARGUMENT : ftp->ftp.nak();
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_nak_errno(mp_ftp *ftp) {
+    return ftp == nullptr ? MP_ERR_ARGUMENT : ftp->ftp.nak_errno();
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_nak_opcode(mp_ftp *ftp) {
+    return ftp == nullptr ? MP_ERR_ARGUMENT : ftp->ftp.nak_opcode();
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_opcode(mp_ftp *ftp) {
+    return ftp == nullptr ? MP_ERR_ARGUMENT : ftp->ftp.opcode();
+}
+
+MPCORE_API uint32_t MPCORE_CALL mp_ftp_value(mp_ftp *ftp) {
+    return ftp == nullptr ? 0 : ftp->ftp.value();
+}
+
+MPCORE_API int64_t MPCORE_CALL mp_ftp_file_size(mp_ftp *ftp) {
+    return ftp == nullptr ? -1 : ftp->ftp.file_size();
+}
+
+MPCORE_API uint64_t MPCORE_CALL mp_ftp_progress(mp_ftp *ftp) {
+    return ftp == nullptr ? 0 : ftp->ftp.progress();
+}
+
+MPCORE_API size_t MPCORE_CALL mp_ftp_data(mp_ftp *ftp, void *out, size_t capacity) {
+    if (ftp == nullptr)
+        return 0;
+    const auto &data = ftp->ftp.data();
+    if (out != nullptr && !data.empty())
+        std::memcpy(out, data.data(), data.size() < capacity ? data.size() : capacity);
+    return data.size();
+}
+
+MPCORE_API size_t MPCORE_CALL mp_ftp_entry_count(mp_ftp *ftp) {
+    return ftp == nullptr ? 0 : ftp->ftp.entries().size();
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_entry_get(mp_ftp *ftp, size_t index, mp_ftp_entry *out) {
+    if (ftp == nullptr || out == nullptr || out->struct_size < sizeof(mp_ftp_entry) ||
+        index >= ftp->ftp.entries().size())
+        return MP_ERR_ARGUMENT;
+    const auto &e = ftp->ftp.entries()[index];
+    out->kind = static_cast<uint8_t>(e.kind);
+    std::memset(out->reserved, 0, sizeof(out->reserved));
+    out->mtime = e.mtime;
+    out->reserved2 = 0;
+    out->size = e.size;
+    return MP_OK;
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_entry_name(mp_ftp *ftp, size_t index, char *out, size_t capacity) {
+    if (ftp == nullptr || index >= ftp->ftp.entries().size())
+        return MP_ERR_ARGUMENT;
+    const std::string &name = ftp->ftp.entries()[index].name;
+    if (out != nullptr && !name.empty())
+        std::memcpy(out, name.data(), name.size() < capacity ? name.size() : capacity);
+    return static_cast<int>(name.size());
+}
+
+MPCORE_API uint16_t MPCORE_CALL mp_ftp_next_seq(mp_ftp *ftp) {
+    return ftp == nullptr ? 0 : ftp->ftp.next_seq();
+}
+
+MPCORE_API void MPCORE_CALL mp_ftp_set_next_seq(mp_ftp *ftp, uint16_t seq) {
+    if (ftp != nullptr)
+        ftp->ftp.set_next_seq(seq);
+}
+
+MPCORE_API int MPCORE_CALL mp_ftp_plain_listing(mp_ftp *ftp) {
+    return ftp != nullptr && ftp->ftp.plain_listing() ? 1 : 0;
+}
+
+MPCORE_API void MPCORE_CALL mp_ftp_set_plain_listing(mp_ftp *ftp, int plain) {
+    if (ftp != nullptr)
+        ftp->ftp.set_plain_listing(plain != 0);
+}
+
+MPCORE_API uint32_t MPCORE_CALL mp_ftp_requests_sent(mp_ftp *ftp) {
+    return ftp == nullptr ? 0 : ftp->ftp.requests_sent();
 }
 
 }  // extern "C"

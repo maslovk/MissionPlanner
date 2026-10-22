@@ -361,6 +361,112 @@ MPCORE_API int MPCORE_CALL mp_mission_upload_count_accepted(mp_mission_upload *u
 /* The highest seq the vehicle asked for, -1 before any. */
 MPCORE_API int MPCORE_CALL mp_mission_upload_highest_requested(mp_mission_upload *upload);
 
+/*
+ * MAVLink FTP (FILE_TRANSFER_PROTOCOL) with Mission Planner's MAVFtp timeouts, one operation at a
+ * time: a file download (sessions reset, open, burst or plain reads, the holes read again), a file
+ * upload (sessions reset, create, writes, sessions reset), a directory listing (timed, else plain)
+ * or a single command. Same shape as the other protocol objects: no I/O, not thread-safe, send
+ * runs inside the calls. Paths are UTF-8, at most MP_FTP_MAX_DATA bytes (a rename's two with the
+ * NUL between them).
+ */
+typedef struct mp_ftp mp_ftp;
+
+#define MP_FTP_MAX_DATA 239
+
+/* mp_ftp_tick() results */
+#define MP_FTP_RUNNING 0
+#define MP_FTP_DONE    1
+#define MP_FTP_FAILED  2 /* see mp_ftp_nak(): a NAK, or MP_FTP_ERR_NONE for a timeout or a cancel */
+
+/* FTP request opcodes (the MAVLink FTP specification) */
+#define MP_FTP_TERMINATE_SESSION 1
+#define MP_FTP_RESET_SESSIONS    2
+#define MP_FTP_LIST_DIRECTORY    3
+#define MP_FTP_OPEN_FILE_RO      4
+#define MP_FTP_READ_FILE         5
+#define MP_FTP_CREATE_FILE       6
+#define MP_FTP_WRITE_FILE        7
+#define MP_FTP_REMOVE_FILE       8
+#define MP_FTP_CREATE_DIRECTORY  9
+#define MP_FTP_REMOVE_DIRECTORY  10
+#define MP_FTP_OPEN_FILE_WO      11
+#define MP_FTP_TRUNCATE_FILE     12
+#define MP_FTP_RENAME            13
+#define MP_FTP_CALC_FILE_CRC32   14
+#define MP_FTP_BURST_READ_FILE   15
+#define MP_FTP_LIST_DIRECTORY_WITH_TIME 16
+
+/* NAK codes */
+#define MP_FTP_ERR_NONE                 0
+#define MP_FTP_ERR_FAIL                 1
+#define MP_FTP_ERR_FAIL_ERRNO           2
+#define MP_FTP_ERR_INVALID_DATA_SIZE    3
+#define MP_FTP_ERR_INVALID_SESSION      4
+#define MP_FTP_ERR_NO_SESSIONS_AVAILABLE 5
+#define MP_FTP_ERR_EOF                  6
+#define MP_FTP_ERR_UNKNOWN_COMMAND      7
+#define MP_FTP_ERR_FAIL_FILE_EXISTS     8
+#define MP_FTP_ERR_FAIL_FILE_PROTECTED  9
+#define MP_FTP_ERR_FILE_NOT_FOUND       10
+
+typedef struct mp_ftp_entry {
+    uint32_t struct_size; /* set to sizeof(mp_ftp_entry) */
+    uint8_t kind;         /* 'F' file, 'D' directory, 'S' an entry the vehicle skipped */
+    uint8_t reserved[3];
+    uint32_t mtime;       /* seconds since 1970 (UTC), 0 if not known */
+    uint32_t reserved2;
+    uint64_t size;
+} mp_ftp_entry;
+
+MPCORE_API mp_ftp *MPCORE_CALL mp_ftp_create(uint32_t sysid, uint8_t compid, uint32_t gcs_sysid,
+                                             uint8_t gcs_compid, mp_message_fn send, void *user);
+MPCORE_API void MPCORE_CALL mp_ftp_destroy(mp_ftp *ftp);
+/* Starts an operation; MP_ERR_ARGUMENT while one runs or for a bad argument. read_size: bytes per
+   read (1..MP_FTP_MAX_DATA); burst: BurstReadFile, else ReadFile. */
+MPCORE_API int MPCORE_CALL mp_ftp_get_file(mp_ftp *ftp, const char *path, uint8_t read_size, int burst,
+                                           int64_t now_us);
+MPCORE_API int MPCORE_CALL mp_ftp_put_file(mp_ftp *ftp, const char *path, const void *data, size_t len,
+                                           int64_t now_us);
+MPCORE_API int MPCORE_CALL mp_ftp_list(mp_ftp *ftp, const char *dir, int64_t now_us);
+/* One of TERMINATE_SESSION, RESET_SESSIONS, REMOVE_FILE, CREATE_DIRECTORY, REMOVE_DIRECTORY,
+   TRUNCATE_FILE, RENAME (path to path2) or CALC_FILE_CRC32; path2 may be NULL otherwise. */
+MPCORE_API int MPCORE_CALL mp_ftp_command(mp_ftp *ftp, uint8_t opcode, const char *path, const char *path2,
+                                          int64_t now_us);
+/* Stops the operation (MP_FTP_FAILED, no NAK). */
+MPCORE_API int MPCORE_CALL mp_ftp_cancel(mp_ftp *ftp);
+MPCORE_API int MPCORE_CALL mp_ftp_frame(mp_ftp *ftp, const uint8_t *frame, size_t len, int64_t now_us);
+/* Resends when due. Returns MP_FTP_* (or a negative MP_ERR_*). */
+MPCORE_API int MPCORE_CALL mp_ftp_tick(mp_ftp *ftp, int64_t now_us);
+/* Once failed: the NAK code (MP_FTP_ERR_*), its errno, and the request opcode it answered. */
+MPCORE_API int MPCORE_CALL mp_ftp_nak(mp_ftp *ftp);
+MPCORE_API int MPCORE_CALL mp_ftp_nak_errno(mp_ftp *ftp);
+MPCORE_API int MPCORE_CALL mp_ftp_nak_opcode(mp_ftp *ftp);
+/* The request being sent (the last one once finished). */
+MPCORE_API int MPCORE_CALL mp_ftp_opcode(mp_ftp *ftp);
+/* CALC_FILE_CRC32's CRC. */
+MPCORE_API uint32_t MPCORE_CALL mp_ftp_value(mp_ftp *ftp);
+/* A download: the size opened (-1 before), cut to where the file ended. */
+MPCORE_API int64_t MPCORE_CALL mp_ftp_file_size(mp_ftp *ftp);
+/* A download: bytes received; an upload: bytes acknowledged. */
+MPCORE_API uint64_t MPCORE_CALL mp_ftp_progress(mp_ftp *ftp);
+/* A finished download: copies up to capacity bytes (out may be NULL); returns the file's length. */
+MPCORE_API size_t MPCORE_CALL mp_ftp_data(mp_ftp *ftp, void *out, size_t capacity);
+/* A listing's entries so far. */
+MPCORE_API size_t MPCORE_CALL mp_ftp_entry_count(mp_ftp *ftp);
+MPCORE_API int MPCORE_CALL mp_ftp_entry_get(mp_ftp *ftp, size_t index, mp_ftp_entry *out);
+/* Copies an entry's UTF-8 name, without a NUL (out may be NULL); returns its length, or a negative
+   MP_ERR_*. */
+MPCORE_API int MPCORE_CALL mp_ftp_entry_name(mp_ftp *ftp, size_t index, char *out, size_t capacity);
+/* The seq of the next request, to share with code that sends FTP requests itself. */
+MPCORE_API uint16_t MPCORE_CALL mp_ftp_next_seq(mp_ftp *ftp);
+MPCORE_API void MPCORE_CALL mp_ftp_set_next_seq(mp_ftp *ftp, uint16_t seq);
+/* 1 once the vehicle NAKed a timed listing: listings are plain from then on. Settable, to keep it
+   across objects. */
+MPCORE_API int MPCORE_CALL mp_ftp_plain_listing(mp_ftp *ftp);
+MPCORE_API void MPCORE_CALL mp_ftp_set_plain_listing(mp_ftp *ftp, int plain);
+/* FILE_TRANSFER_PROTOCOL messages sent, resends included. */
+MPCORE_API uint32_t MPCORE_CALL mp_ftp_requests_sent(mp_ftp *ftp);
+
 #ifdef __cplusplus
 }
 #endif
