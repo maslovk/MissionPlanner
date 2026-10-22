@@ -94,6 +94,27 @@ namespace MissionPlanner.ArduPilot
 
                 int a;
 
+                if (Settings.Instance.GetBoolean("mpcore_missions", false) &&
+                    MissionPlanner.ArduPilot.Mavlink.MpCoreNativeLoader.Available("missions", log.Info))
+                {
+                    // the C++ core sends the count and each item the vehicle asks for, until its ACK
+                    var (result, highest) = await port
+                        .MissionUploadNativeAsync(sysid, compid, type, commandlist, use_int, progress)
+                        .ConfigureAwait(false);
+                    if (result == MAVLink.MAV_MISSION_RESULT.MAV_MISSION_NO_SPACE)
+                        throw new Exception("Upload failed, please reduce the number of wp's");
+                    if (result == MAVLink.MAV_MISSION_RESULT.MAV_MISSION_INVALID)
+                        throw new Exception(
+                            "Upload failed, mission was rejected by the Mav,\n item had a bad option wp# " + highest + " " +
+                            result);
+                    if (result != MAVLink.MAV_MISSION_RESULT.MAV_MISSION_ACCEPTED)
+                        throw new Exception("Upload " + type.ToString() + " failed " +
+                                            (highest >= 0 && highest < commandlist.Count
+                                                ? Enum.Parse(typeof(MAVLink.MAV_CMD), commandlist[highest].id.ToString()) + " "
+                                                : "") + result);
+                    return;
+                }
+
                 await port.setWPTotalAsync(sysid, compid, (ushort) commandlist.Count, type).ConfigureAwait(false);
 
                 // process commandlist to the mav

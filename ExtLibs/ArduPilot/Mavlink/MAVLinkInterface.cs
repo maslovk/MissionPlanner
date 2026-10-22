@@ -4246,21 +4246,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
 
                         if (request.seq == 0 || request.seq == 1)
                         {
-                            if (req.mission_type == (byte) MAV_MISSION_TYPE.MISSION)
-                            {
-                                if (MAV.param["WP_TOTAL"] != null)
-                                    MAV.param["WP_TOTAL"].Value = wp_total - 1;
-                                if (MAV.param["CMD_TOTAL"] != null)
-                                    MAV.param["CMD_TOTAL"].Value = wp_total - 1;
-                                if (MAV.param["MIS_TOTAL"] != null)
-                                    MAV.param["MIS_TOTAL"].Value = wp_total - 1;
-                                MAVlist[sysid, compid].wps.Clear();
-                            }
-
-                            if (req.mission_type == (byte) MAV_MISSION_TYPE.FENCE)
-                                MAVlist[sysid, compid].fencepoints.Clear();
-                            if (req.mission_type == (byte) MAV_MISSION_TYPE.RALLY)
-                                MAVlist[sysid, compid].rallypoints.Clear();
+                            ApplyWPTotal(sysid, compid, wp_total, type);
 
                             giveComport = false;
                             return;
@@ -4276,21 +4262,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
 
                         if (request.seq == 0 || request.seq == 1)
                         {
-                            if (req.mission_type == (byte) MAV_MISSION_TYPE.MISSION)
-                            {
-                                if (MAV.param["WP_TOTAL"] != null)
-                                    MAV.param["WP_TOTAL"].Value = wp_total - 1;
-                                if (MAV.param["CMD_TOTAL"] != null)
-                                    MAV.param["CMD_TOTAL"].Value = wp_total - 1;
-                                if (MAV.param["MIS_TOTAL"] != null)
-                                    MAV.param["MIS_TOTAL"].Value = wp_total - 1;
-                                MAVlist[sysid, compid].wps.Clear();
-                            }
-
-                            if (req.mission_type == (byte) MAV_MISSION_TYPE.FENCE)
-                                MAVlist[sysid, compid].fencepoints.Clear();
-                            if (req.mission_type == (byte) MAV_MISSION_TYPE.RALLY)
-                                MAVlist[sysid, compid].rallypoints.Clear();
+                            ApplyWPTotal(sysid, compid, wp_total, type);
 
                             giveComport = false;
                             return;
@@ -4432,6 +4404,17 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
             MAV_FRAME frame, byte current = 0,
             byte autocontinue = 1, bool use_int = false, MAV_MISSION_TYPE mission_type = MAV_MISSION_TYPE.MISSION)
         {
+            var item = MissionItem(sysid, compid, loc, index, frame, current, autocontinue, use_int, mission_type);
+            if (use_int)
+                return await setWPAsync((mavlink_mission_item_int_t) item, sysid, compid).ConfigureAwait(false);
+            return await setWPAsync((mavlink_mission_item_t) item, sysid, compid).ConfigureAwait(false);
+        }
+
+        // setWPAsync's MISSION_ITEM_INT (use_int) or MISSION_ITEM for a Locationwp: INT coordinates are
+        // 1e7 degrees for location commands and plain numbers otherwise.
+        private static object MissionItem(uint sysid, byte compid, Locationwp loc, ushort index, MAV_FRAME frame,
+            byte current, byte autocontinue, bool use_int, MAV_MISSION_TYPE mission_type)
+        {
             if (use_int)
             {
                 mavlink_mission_item_int_t req = new mavlink_mission_item_int_t
@@ -4465,7 +4448,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
 
                 req.seq = index;
 
-                return await setWPAsync(req, sysid, compid).ConfigureAwait(false);
+                return req;
             }
             else
             {
@@ -4488,7 +4471,121 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                     seq = index
                 };
 
-                return await setWPAsync(req, sysid, compid).ConfigureAwait(false);
+                return req;
+            }
+        }
+
+        // setWPTotalAsync's bookkeeping once the vehicle takes the count.
+        private void ApplyWPTotal(uint sysid, byte compid, ushort wp_total, MAV_MISSION_TYPE type)
+        {
+            if (type == MAV_MISSION_TYPE.MISSION)
+            {
+                if (MAV.param["WP_TOTAL"] != null)
+                    MAV.param["WP_TOTAL"].Value = wp_total - 1;
+                if (MAV.param["CMD_TOTAL"] != null)
+                    MAV.param["CMD_TOTAL"].Value = wp_total - 1;
+                if (MAV.param["MIS_TOTAL"] != null)
+                    MAV.param["MIS_TOTAL"].Value = wp_total - 1;
+                MAVlist[sysid, compid].wps.Clear();
+            }
+
+            if (type == MAV_MISSION_TYPE.FENCE)
+                MAVlist[sysid, compid].fencepoints.Clear();
+            if (type == MAV_MISSION_TYPE.RALLY)
+                MAVlist[sysid, compid].rallypoints.Clear();
+        }
+
+        /// <summary>
+        /// mav_mission.upload run by the C++ core (setting "mpcore_missions"): MISSION_COUNT, each
+        /// item as the vehicle asks for it, until its MISSION_ACK, whose result is returned with the
+        /// highest seq the vehicle asked for. The caches are kept as setWPTotalAsync and setWPAsync
+        /// keep them. Times out as they do.
+        /// </summary>
+        public async Task<(MAV_MISSION_RESULT result, int highest)> MissionUploadNativeAsync(uint sysid, byte compid,
+            MAV_MISSION_TYPE type, List<Locationwp> commandlist, bool use_int, Action<int, string> progress = null)
+        {
+            giveComport = true;
+            var subs = new List<int>();
+            try
+            {
+                using (var upload = new MissionPlanner.Mavlink.Native.MpMissionUpload(sysid, compid, gcssysid,
+                    (byte) MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER, (byte) type,
+                    (msgid, payload) => SendPayload(msgid, payload, sysid, compid)))
+                {
+                    var items = new List<object>();
+                    for (ushort a = 0; a < commandlist.Count; a++)
+                    {
+                        var item = MissionItem(sysid, compid, commandlist[a], a, (MAV_FRAME) commandlist[a].frame, 0, 1,
+                            use_int, type);
+                        items.Add(item);
+                        upload.Add(use_int ? (uint) MAVLINK_MSG_ID.MISSION_ITEM_INT : (uint) MAVLINK_MSG_ID.MISSION_ITEM,
+                            MavlinkUtil.StructureToByteArray(item));
+                    }
+
+                    foreach (var reply in new[]
+                                 { MAVLINK_MSG_ID.MISSION_REQUEST, MAVLINK_MSG_ID.MISSION_REQUEST_INT, MAVLINK_MSG_ID.MISSION_ACK })
+                        subs.Add(SubscribeToPacketType(reply, buffer =>
+                        {
+                            upload.Frame(buffer.buffer);
+                            return true;
+                        }, sysid, compid));
+
+                    log.Info("setWPTotal MISSION_COUNT " + commandlist.Count + " " + type);
+                    upload.Start();
+                    bool counted = false;
+                    int reported = -1;
+                    while (true)
+                    {
+                        var state = upload.Tick();
+                        if (!counted && upload.CountAccepted)
+                        {
+                            counted = true;
+                            ApplyWPTotal(sysid, compid, (ushort) commandlist.Count, type);
+                        }
+
+                        if (state == MissionPlanner.Mavlink.Native.MpMissionDownload.Result.Done)
+                            break;
+                        if (state == MissionPlanner.Mavlink.Native.MpMissionDownload.Result.Failed)
+                            throw new TimeoutException(upload.CountAccepted
+                                ? "Timeout on read - setWP"
+                                : "Timeout on read - setWPTotal");
+
+                        int asked = upload.HighestRequested;
+                        if (asked != reported && commandlist.Count > 0)
+                        {
+                            reported = asked;
+                            progress?.Invoke((asked * 100) / commandlist.Count, "Uploading WP " + asked);
+                        }
+
+                        await readPacketAsync().ConfigureAwait(false);
+                    }
+
+                    var result = (MAV_MISSION_RESULT) upload.Result;
+                    log.Info("setWP MISSION_ACK " + result);
+                    if (result == MAV_MISSION_RESULT.MAV_MISSION_ACCEPTED)
+                    {
+                        // what setWPAsync keeps of each item the vehicle took
+                        foreach (var item in items)
+                        {
+                            var loc = use_int ? (Locationwp) (mavlink_mission_item_int_t) item : (Locationwp) (mavlink_mission_item_t) item;
+                            int seq = use_int ? ((mavlink_mission_item_int_t) item).seq : ((mavlink_mission_item_t) item).seq;
+                            if (type == MAV_MISSION_TYPE.MISSION)
+                                MAVlist[sysid, compid].wps[seq] = loc;
+                            if (type == MAV_MISSION_TYPE.FENCE)
+                                MAVlist[sysid, compid].fencepoints[seq] = loc;
+                            if (type == MAV_MISSION_TYPE.RALLY)
+                                MAVlist[sysid, compid].rallypoints[seq] = loc;
+                        }
+                    }
+
+                    return (result, upload.HighestRequested);
+                }
+            }
+            finally
+            {
+                foreach (var sub in subs)
+                    UnSubscribeToPacketType(sub);
+                giveComport = false;
             }
         }
 

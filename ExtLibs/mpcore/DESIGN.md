@@ -155,7 +155,21 @@ version against the same simulated vehicle.
    (`LocationFromItem`, now shared). Tests: `tests/test_mission.cpp`, the smoke test and
    `MissionPlannerTests/Mavlink/MpCoreMissionTests.cs` (both ways, with and without MISSION_INT, a
    lost count and a stale item: the same items, requests and ACK).
-4. Mission upload (`mav_mission.upload`, with its partial-list and INVALID_SEQUENCE recovery).
+4. **Mission upload (done, same setting).** `MissionUpload` (`src/mission_upload.*`, C ABI
+   `mp_mission_upload_*`, C# `MpMissionUpload`) lets the vehicle drive the upload as the protocol
+   intends: MISSION_COUNT (700 ms, 3 resends, as `setWPTotalAsync`), then every MISSION_REQUEST_INT
+   or MISSION_REQUEST answered with the item it names, in any order and as often as asked, until the
+   vehicle's MISSION_ACK; the last thing sent goes again after 450 ms, up to 10 times (as
+   `setWPAsync`). `mav_mission.upload` instead sends item by item and waits for the next request,
+   so it needs MISSION_WRITE_PARTIAL_LIST and "which item do you want" recovery when a request or
+   an ACK is lost; answering what is asked needs neither. `MissionUploadNativeAsync` builds the
+   items as `setWPAsync` does (`MissionItem`, now shared), does `setWPTotalAsync`'s bookkeeping once
+   the vehicle takes the count (`ApplyWPTotal`, shared, still on the current MAV), keeps the items
+   in `wps`/`fencepoints`/`rallypoints` once the upload is accepted (the C# loop keeps each as it
+   goes), and `mav_mission.upload` turns the ACK into the same errors. Tests:
+   `tests/test_mission.cpp`, the smoke test and `MpCoreMissionTests.NativeMissionUploadSendsTheSameItems`
+   (both ways, with and without MISSION_INT, a lost count and a lost request: the same items on the
+   vehicle and in `wps`, the same resends).
 5. MAVFTP.
 6. `CurrentState`.
 
