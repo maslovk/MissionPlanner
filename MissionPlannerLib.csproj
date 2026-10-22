@@ -75,6 +75,7 @@
     <Compile Remove="ExtLibs\MissionPlanner.Gridv2\**" />
     <Compile Remove="ExtLibs\MissionPlanner.Stats\**" />
     <Compile Remove="ExtLibs\Mock\**" />
+    <Compile Remove="ExtLibs\mpcore\**" />
     <Compile Remove="ExtLibs\NetDFULib\**" />
     <Compile Remove="ExtLibs\netDxf\**" />
     <Compile Remove="ExtLibs\Ntrip\**" />
@@ -174,6 +175,7 @@
     <EmbeddedResource Remove="ExtLibs\MissionPlanner.Gridv2\**" />
     <EmbeddedResource Remove="ExtLibs\MissionPlanner.Stats\**" />
     <EmbeddedResource Remove="ExtLibs\Mock\**" />
+    <EmbeddedResource Remove="ExtLibs\mpcore\**" />
     <EmbeddedResource Remove="ExtLibs\NetDFULib\**" />
     <EmbeddedResource Remove="ExtLibs\netDxf\**" />
     <EmbeddedResource Remove="ExtLibs\Ntrip\**" />
@@ -272,6 +274,7 @@
     <None Remove="ExtLibs\MissionPlanner.Gridv2\**" />
     <None Remove="ExtLibs\MissionPlanner.Stats\**" />
     <None Remove="ExtLibs\Mock\**" />
+    <None Remove="ExtLibs\mpcore\**" />
     <None Remove="ExtLibs\NetDFULib\**" />
     <None Remove="ExtLibs\netDxf\**" />
     <None Remove="ExtLibs\Ntrip\**" />
