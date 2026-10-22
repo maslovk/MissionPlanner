@@ -19,7 +19,7 @@ cmake --build ExtLibs/mpcore/build/linux-debug
 ctest --test-dir ExtLibs/mpcore/build/linux-debug
 ```
 
-On Windows use the `windows-x64` or `windows-x86` preset (Visual Studio 2022) and add
+On Windows use the `windows-x64` or `windows-x86` preset (the newest Visual Studio installed) and add
 `--config Release` / `-C Release`. Mission Planner is AnyCPU, so both DLLs are needed.
 
 To also test the C# binding and the shadow comparer, pass a C# compiler:

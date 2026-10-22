@@ -8,6 +8,7 @@ on:
       - 'ExtLibs/Mavlink/**'
       - 'ExtLibs/ArduPilot/Mavlink/MpCoreShadow.cs'
       - '.github/workflows/mpcore.yml'
+      - '.github/scripts/run-annotated.ps1'
   pull_request:
     paths:
       - 'ExtLibs/mpcore/**'
@@ -15,6 +16,7 @@ on:
       - 'ExtLibs/Mavlink/**'
       - 'ExtLibs/ArduPilot/Mavlink/MpCoreShadow.cs'
       - '.github/workflows/mpcore.yml'
+      - '.github/scripts/run-annotated.ps1'
   workflow_dispatch:
 
 jobs:
@@ -54,15 +56,19 @@ jobs:
           fetch-depth: 1
       - name: Check out pymavlink
         run: git submodule update --init --depth 1 ExtLibs/mpcore/third_party/pymavlink
+      # the run-annotated wrapper repeats a failure's output as an annotation, readable without a login
       - name: Configure
         shell: pwsh
         run: |
+          cmake --version
           $csc = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "MSBuild\Current\Bin\Roslyn\csc.exe" | Select-Object -First 1
-          cmake --preset ${{ matrix.preset }} -S ExtLibs/mpcore "-DMPCORE_CSHARP_COMPILER=$csc"
+          pwsh .github/scripts/run-annotated.ps1 cmake --preset ${{ matrix.preset }} -S ExtLibs/mpcore "-DMPCORE_CSHARP_COMPILER=$csc"
       - name: Build
-        run: cmake --build ExtLibs/mpcore/build/${{ matrix.preset }} --config Release
+        shell: pwsh
+        run: pwsh .github/scripts/run-annotated.ps1 cmake --build ExtLibs/mpcore/build/${{ matrix.preset }} --config Release
       - name: Test
-        run: ctest --test-dir ExtLibs/mpcore/build/${{ matrix.preset }} -C Release --output-on-failure
+        shell: pwsh
+        run: pwsh .github/scripts/run-annotated.ps1 ctest --test-dir ExtLibs/mpcore/build/${{ matrix.preset }} -C Release --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: mpcore-${{ matrix.preset }}

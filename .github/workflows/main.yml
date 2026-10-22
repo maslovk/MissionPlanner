@@ -26,9 +26,9 @@ jobs:
         shell: pwsh
         run: |
           foreach ($arch in @('x64', 'x86')) {
-            cmake --preset windows-$arch -S ExtLibs/mpcore -DMPCORE_BUILD_TESTS=OFF
+            pwsh .github/scripts/run-annotated.ps1 cmake --preset windows-$arch -S ExtLibs/mpcore -DMPCORE_BUILD_TESTS=OFF
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            cmake --build ExtLibs/mpcore/build/windows-$arch --config Release --target mpcore
+            pwsh .github/scripts/run-annotated.ps1 cmake --build ExtLibs/mpcore/build/windows-$arch --config Release --target mpcore
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             New-Item -ItemType Directory -Force bin/Release/net461/$arch | Out-Null
             Copy-Item ExtLibs/mpcore/build/windows-$arch/bin/Release/mpcore.dll bin/Release/net461/$arch/
