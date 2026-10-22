@@ -54,6 +54,10 @@ options such as `--no-restore` can be passed to `build.sh` (keep Release).
 facades, bundled serializer compiler helper, and license notice when Mono is
 installed in a nonstandard location.
 Standard NuGet variables such as `NUGET_PACKAGES` are respected.
+If CMake and Python 3 are installed and the `ExtLibs/mpcore/third_party/pymavlink` submodule is
+checked out, the build also packages `libmpcore.so`, the C++ MAVLink core that the
+`mpcore_shadow` setting runs beside the C# parser (see `ExtLibs/mpcore/DESIGN.md`); otherwise it
+is skipped with a note.
 
 Output:
 

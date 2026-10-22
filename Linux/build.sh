@@ -42,6 +42,18 @@ dotnet build MissionPlanner.csproj --configuration Release \
 app_dir="$source_dir/bin/Release/net461"
 mono "$app_dir/version.exe" "$app_dir/MissionPlanner.exe" > "$app_dir/version.txt"
 cp -- ExtLibs/System.Speech.dll "$app_dir/"
+# The C++ MAVLink core used by the mpcore_shadow setting (ExtLibs/mpcore). Optional: it needs
+# CMake, Python 3 and the ExtLibs/mpcore/third_party/pymavlink submodule. Mono finds it next to
+# the assemblies.
+mpcore_dir="$source_dir/ExtLibs/mpcore"
+if command -v cmake >/dev/null && command -v python3 >/dev/null &&
+    [[ -f $mpcore_dir/third_party/pymavlink/generator/mavgen_c.py ]]; then
+    cmake -S "$mpcore_dir" -B "$mpcore_dir/build/package" -DCMAKE_BUILD_TYPE=Release -DMPCORE_BUILD_TESTS=OFF
+    cmake --build "$mpcore_dir/build/package" --target mpcore
+    cp -L -- "$mpcore_dir/build/package/bin/libmpcore.so" "$app_dir/libmpcore.so"
+else
+    echo 'Skipping libmpcore.so: needs cmake, python3 and the ExtLibs/mpcore/third_party/pymavlink submodule.' >&2
+fi
 # NativeLibrary is compiled into MissionPlanner.exe. Map its Linux loader name
 # to the runtime soname so users do not need the libc development symlink.
 sed -i '/<dllmap dll="libdl.so"/d; /<\/configSections>/a\  <dllmap dll="libdl.so" target="libdl.so.2" os="linux" />' \

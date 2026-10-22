@@ -20,6 +20,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # only the generator the C++ core needs (libmpcore.so); the Mono submodule is not used here
+      - name: Check out pymavlink
+        run: git submodule update --init --depth 1 ExtLibs/mpcore/third_party/pymavlink
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'

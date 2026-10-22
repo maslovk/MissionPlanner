@@ -20,6 +20,20 @@ jobs:
           nuget locals all -clear
           msbuild -v:m -restore -t:Build -p:Configuration=Release MissionPlanner.sln
 
+      # The C++ MAVLink core for the mpcore_shadow setting, one DLL per process bitness
+      # (Mission Planner is AnyCPU), placed where MpCoreShadow loads it from.
+      - name: Build mpcore
+        shell: pwsh
+        run: |
+          foreach ($arch in @('x64', 'x86')) {
+            cmake --preset windows-$arch -S ExtLibs/mpcore -DMPCORE_BUILD_TESTS=OFF
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            cmake --build ExtLibs/mpcore/build/windows-$arch --config Release --target mpcore
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            New-Item -ItemType Directory -Force bin/Release/net461/$arch | Out-Null
+            Copy-Item ExtLibs/mpcore/build/windows-$arch/bin/Release/mpcore.dll bin/Release/net461/$arch/
+          }
+
       - name: MAVLink protocol regression tests
         shell: pwsh
         run: |
