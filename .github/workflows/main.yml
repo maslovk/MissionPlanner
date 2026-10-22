@@ -41,8 +41,8 @@ jobs:
         env:
           MPCORE_REQUIRED: '1' # MpCoreReceiveTests fail rather than skip without the native library
         run: |
-          dotnet test MissionPlannerTests/MissionPlannerTests.csproj --configuration Release --filter "FullyQualifiedName~Sysid32Tests|FullyQualifiedName~MpCoreReceiveTests" --logger "trx;LogFileName=sysid32.trx"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          . .github/scripts/run-annotated.ps1
+          Invoke-Annotated { dotnet test MissionPlannerTests/MissionPlannerTests.csproj --configuration Release --filter "FullyQualifiedName~Sysid32Tests|FullyQualifiedName~MpCoreReceiveTests" --logger "trx;LogFileName=sysid32.trx" } | Out-Null
 
       - name: Cleanup
         shell: pwsh
