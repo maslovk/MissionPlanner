@@ -6,6 +6,7 @@
 
 #include "link.hpp"
 #include "mpcore/mpcore.h"
+#include "param_download.hpp"
 #include "protocol.hpp"
 
 struct mp_link {
@@ -14,10 +15,35 @@ struct mp_link {
     mp_link_callbacks callbacks{};
 };
 
+struct mp_param_download {
+    mp_param_download(uint32_t sysid, uint8_t compid, mp_message_fn send, mp_param_fn on_param, void *user)
+        : download(
+              sysid, compid,
+              [send, user](uint32_t msgid, const uint8_t *payload, std::size_t len) {
+                  if (send)
+                      send(user, msgid, payload, len);
+              },
+              [on_param, user](const mpcore::ParamValue &p, bool duplicate) {
+                  if (!on_param)
+                      return;
+                  mp_param out{};
+                  out.struct_size = sizeof(out);
+                  out.name = p.name.c_str();
+                  out.value = p.value;
+                  out.type = p.type;
+                  out.duplicate = duplicate ? 1 : 0;
+                  out.index = p.index;
+                  out.count = p.count;
+                  on_param(user, &out);
+              }) {}
+    mpcore::ParamDownload download;
+};
+
 // Layouts the C# binding relies on (MissionPlanner.Mavlink.Native)
 static_assert(offsetof(mp_encode_args, timestamp) == 32, "mp_encode_args.timestamp moved");
 static_assert(offsetof(mp_encode_args, key) == 40, "mp_encode_args.key moved");
 static_assert(MPCORE_MAX_FRAME_LEN == mpcore::kMaxFrameLen, "MPCORE_MAX_FRAME_LEN is wrong");
+static_assert(offsetof(mp_param, value) == 2 * sizeof(void *), "mp_param.value moved");
 
 namespace {
 
@@ -262,6 +288,66 @@ MPCORE_API int MPCORE_CALL mp_link_stats_get(mp_link *link, mp_link_stats *out) 
     if (link == nullptr)
         return MP_ERR_ARGUMENT;
     return copy_out(link->link.stats(), out);
+}
+
+MPCORE_API mp_param_download *MPCORE_CALL mp_param_download_create(uint32_t sysid, uint8_t compid,
+                                                                    mp_message_fn send, mp_param_fn on_param,
+                                                                    void *user) {
+    return new (std::nothrow) mp_param_download(sysid, compid, send, on_param, user);
+}
+
+MPCORE_API void MPCORE_CALL mp_param_download_destroy(mp_param_download *download) {
+    delete download;
+}
+
+MPCORE_API int MPCORE_CALL mp_param_download_start(mp_param_download *download, int64_t now_us) {
+    if (download == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        download->download.start(now_us);
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+    return MP_OK;
+}
+
+MPCORE_API int MPCORE_CALL mp_param_download_frame(mp_param_download *download, const uint8_t *frame,
+                                                   size_t len, int64_t now_us) {
+    if (download == nullptr || frame == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        download->download.on_frame(frame, len, now_us);
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+    return MP_OK;
+}
+
+MPCORE_API int MPCORE_CALL mp_param_download_tick(mp_param_download *download, int64_t now_us) {
+    if (download == nullptr)
+        return MP_ERR_ARGUMENT;
+    try {
+        download->download.tick(now_us);
+    } catch (...) {
+        return MP_ERR_ARGUMENT;
+    }
+    return download->download.done() ? 1 : 0;
+}
+
+MPCORE_API int MPCORE_CALL mp_param_download_status_get(mp_param_download *download,
+                                                        mp_param_download_status *out) {
+    if (download == nullptr)
+        return MP_ERR_ARGUMENT;
+    const mpcore::ParamDownload &d = download->download;
+    mp_param_download_status s{};
+    s.struct_size = sizeof(s);
+    s.received = d.received();
+    s.total = d.total();
+    s.full_list_requests = d.full_list_requests();
+    s.single_requests = d.single_requests();
+    s.done = d.done() ? 1 : 0;
+    s.one_by_one = d.one_by_one() ? 1 : 0;
+    return copy_out(s, out);
 }
 
 }  // extern "C"

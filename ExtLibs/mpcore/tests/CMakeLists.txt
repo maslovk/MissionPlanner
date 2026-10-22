@@ -4,6 +4,7 @@ add_executable(mpcore_tests
     test_parser.cpp
     test_seq.cpp
     test_link.cpp
+    test_params.cpp
 )
 target_include_directories(mpcore_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(mpcore_tests PRIVATE mpcore_core)

@@ -52,6 +52,23 @@ struct EncodeRequest {
     uint64_t timestamp = 0;  // signing timestamp, 10 us units since 2015-01-01
 };
 
+// The parts of a frame that has already been checked (by the parser, or Mission Planner's C#).
+struct FrameView {
+    uint32_t msgid = 0;
+    uint32_t sysid = 0;
+    uint8_t compid = 0;
+    uint8_t seq = 0;
+    const uint8_t *payload = nullptr;
+    std::size_t payload_len = 0;  // as on the wire: MAVLink 2 may be zero-trimmed
+};
+
+// false if frame is not a complete MAVLink 1/2 frame
+bool view_frame(const uint8_t *frame, std::size_t len, FrameView &out);
+
+// Copies a payload into out (out_len bytes, the message's full length), zero-filling what
+// MAVLink 2 trimmed.
+void copy_payload(const FrameView &frame, uint8_t *out, std::size_t out_len);
+
 // Writes the frame to out and returns its length, or a negative MP_ERR_* code.
 int encode(const EncodeRequest &request, uint8_t *out, std::size_t out_capacity);
 

@@ -75,6 +75,42 @@ std::size_t header_length(uint8_t stx, uint8_t incompat_flags) {
            ((incompat_flags & kIflagTarget32) ? 4 : 0);
 }
 
+bool view_frame(const uint8_t *frame, std::size_t len, FrameView &out) {
+    if (frame == nullptr || len < 8)
+        return false;
+    const std::size_t header = header_length(frame[0], frame[0] == kStxV2 ? frame[2] : 0);
+    if (frame[0] == kStxV1) {
+        out.seq = frame[2];
+        out.sysid = frame[3];
+        out.compid = frame[4];
+        out.msgid = frame[5];
+    } else if (frame[0] == kStxV2 && len >= header) {
+        const bool wide = (frame[2] & kIflagSysid32) != 0;
+        std::size_t o = 5;
+        out.seq = frame[4];
+        out.sysid = frame[o++];
+        if (wide) {
+            out.sysid |= uint32_t{frame[o]} << 8 | uint32_t{frame[o + 1]} << 16 | uint32_t{frame[o + 2]} << 24;
+            o += 3;
+        }
+        out.compid = frame[o++];
+        out.msgid = uint32_t{frame[o]} | uint32_t{frame[o + 1]} << 8 | uint32_t{frame[o + 2]} << 16;
+    } else {
+        return false;
+    }
+    out.payload_len = frame[1];
+    if (header + out.payload_len + 2 > len)
+        return false;
+    out.payload = frame + header;
+    return true;
+}
+
+void copy_payload(const FrameView &frame, uint8_t *out, std::size_t out_len) {
+    const std::size_t n = frame.payload_len < out_len ? frame.payload_len : out_len;
+    std::memcpy(out, frame.payload, n);
+    std::memset(out + n, 0, out_len - n);
+}
+
 int encode(const EncodeRequest &req, uint8_t *out, std::size_t out_capacity) {
     if ((req.payload == nullptr && req.payload_len != 0) || out == nullptr)
         return MP_ERR_ARGUMENT;

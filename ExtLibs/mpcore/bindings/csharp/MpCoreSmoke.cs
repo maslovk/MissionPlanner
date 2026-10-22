@@ -183,10 +183,51 @@ static class MpCoreSmoke
               error == MpCoreNative.MP_ERR_UNREPRESENTABLE, "no 32-bit source in MAVLink 1");
     }
 
+    // the parameter download through the binding: mp_param's fields arrive where they should
+    static byte[] ParamValue(ushort index, ushort count, string name, float value)
+    {
+        var payload = new byte[25];
+        BitConverter.GetBytes(value).CopyTo(payload, 0);
+        BitConverter.GetBytes(count).CopyTo(payload, 4);
+        BitConverter.GetBytes(index).CopyTo(payload, 6);
+        System.Text.Encoding.ASCII.GetBytes(name).CopyTo(payload, 8);
+        payload[24] = 9;
+        int error;
+        return MpFrameEncoder.Encode(22, payload, 1, 1, 0, (byte)index, false, null, 0, 0, out error);
+    }
+
+    static void Params()
+    {
+        using (var download = new MpParamDownload(1, 1))
+        {
+            var sent = new List<uint>();
+            var got = new List<MpParam>();
+            download.Send += (msgid, payload) => sent.Add(msgid);
+            download.Param += got.Add;
+            download.Start();
+            Check(sent.Count == 1 && sent[0] == 21, "PARAM_REQUEST_LIST sent");
+            download.Frame(ParamValue(0, 3, "ARMING_CHECK", 1));
+            download.Frame(ParamValue(2, 3, "ABCDEFGHIJKLMNOP", -2.5f));
+            download.Frame(ParamValue(2, 3, "ABCDEFGHIJKLMNOP", -2.5f));
+            // the last index came with 1 missing: it is asked for at once
+            Check(!download.Tick() && sent.Count == 2 && sent[1] == 20, "PARAM_REQUEST_READ for the gap");
+            download.Frame(ParamValue(1, 3, "SERIAL0_BAUD", 115));
+            Check(download.Tick() && download.Done, "done");
+            Check(got.Count == 4 && got[2].Duplicate && !got[1].Duplicate, "duplicates flagged");
+            var p = got[1];
+            Check(p.Name == "ABCDEFGHIJKLMNOP" && p.Value == -2.5f && p.Type == 9 && p.Index == 2 && p.Count == 3,
+                "mp_param fields: " + p.Name + " " + p.Value + " " + p.Type + " " + p.Index + " " + p.Count);
+            var status = download.Status;
+            Check(status.received == 3 && status.total == 3 && status.full_list_requests == 1 && status.single_requests == 1 &&
+                  status.done == 1 && status.one_by_one == 1, "status");
+        }
+    }
+
     static int Main()
     {
         Layouts();
         Encoder();
+        Params();
         RoundTrip();
         Signing();
         Console.WriteLine((failures == 0 ? "ok" : "FAIL") + " (" + failures + " failed checks, " + IntPtr.Size * 8 + "-bit)");

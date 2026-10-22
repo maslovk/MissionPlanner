@@ -223,6 +223,54 @@ MPCORE_API size_t MPCORE_CALL mp_link_peer_count(mp_link *link);
 MPCORE_API int MPCORE_CALL mp_link_peer_at(mp_link *link, size_t index, mp_peer_stats *out);
 MPCORE_API int MPCORE_CALL mp_link_stats_get(mp_link *link, mp_link_stats *out);
 
+/*
+ * Parameter list download (PARAM_REQUEST_LIST / PARAM_VALUE, with Mission Planner's retries:
+ * the whole list again below 75 %, then up to 10 missing indexes a second). Like mp_link it does
+ * no I/O: feed it frames, send what it asks for, call tick regularly. One vehicle per download;
+ * not thread-safe; callbacks run inside the calls.
+ */
+typedef struct mp_param_download mp_param_download;
+
+typedef struct mp_param {
+    uint32_t struct_size;
+    const char *name;        /* NUL-terminated, valid during the callback */
+    float value;             /* PARAM_VALUE.param_value as sent */
+    uint8_t type;            /* MAV_PARAM_TYPE */
+    uint8_t duplicate;       /* 1: this index had already arrived */
+    uint16_t index;          /* 65535: a parameter sent on its own, not part of the list */
+    uint16_t count;          /* the vehicle's total */
+    uint16_t reserved;
+} mp_param;
+
+typedef struct mp_param_download_status {
+    uint32_t struct_size;
+    uint32_t received;       /* distinct indexes below the total */
+    uint32_t total;          /* 0 until the vehicle has answered */
+    uint32_t full_list_requests;
+    uint32_t single_requests;
+    uint8_t done;
+    uint8_t one_by_one;
+    uint8_t reserved[2];
+} mp_param_download_status;
+
+/* A message to send to the download's vehicle: msgid and payload in wire order. */
+typedef void (MPCORE_CALL *mp_message_fn)(void *user, uint32_t msgid, const uint8_t *payload, size_t len);
+typedef void (MPCORE_CALL *mp_param_fn)(void *user, const mp_param *param);
+
+MPCORE_API mp_param_download *MPCORE_CALL mp_param_download_create(uint32_t sysid, uint8_t compid,
+                                                                    mp_message_fn send, mp_param_fn on_param,
+                                                                    void *user);
+MPCORE_API void MPCORE_CALL mp_param_download_destroy(mp_param_download *download);
+/* Sends PARAM_REQUEST_LIST. */
+MPCORE_API int MPCORE_CALL mp_param_download_start(mp_param_download *download, int64_t now_us);
+/* Any received frame; PARAM_VALUE from the vehicle is used, the rest ignored. */
+MPCORE_API int MPCORE_CALL mp_param_download_frame(mp_param_download *download, const uint8_t *frame,
+                                                   size_t len, int64_t now_us);
+/* Retries when due. Returns 1 once every parameter has arrived, else 0 (or a negative MP_ERR_*). */
+MPCORE_API int MPCORE_CALL mp_param_download_tick(mp_param_download *download, int64_t now_us);
+MPCORE_API int MPCORE_CALL mp_param_download_status_get(mp_param_download *download,
+                                                        mp_param_download_status *out);
+
 #ifdef __cplusplus
 }
 #endif

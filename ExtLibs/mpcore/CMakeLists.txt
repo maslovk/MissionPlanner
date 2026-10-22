@@ -46,6 +46,7 @@ endfunction()
 add_library(mpcore_core STATIC
     src/frame_parser.cpp
     src/link.cpp
+    src/param_download.cpp
     src/protocol.cpp
     src/seq_tracker.cpp
 )

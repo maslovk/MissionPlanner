@@ -154,6 +154,58 @@ namespace MissionPlanner.Mavlink.Native
             public IntPtr key;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        public struct mp_param
+        {
+            public uint struct_size;
+            public IntPtr name;
+            public float value;
+            public byte type;
+            public byte duplicate;
+            public ushort index;
+            public ushort count;
+            public ushort reserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct mp_param_download_status
+        {
+            public uint struct_size;
+            public uint received;
+            public uint total;
+            public uint full_list_requests;
+            public uint single_requests;
+            public byte done;
+            public byte one_by_one;
+            public byte reserved0;
+            public byte reserved1;
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate void mp_message_fn(IntPtr user, uint msgid, IntPtr payload, UIntPtr len);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate void mp_param_fn(IntPtr user, ref mp_param param);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern IntPtr mp_param_download_create(uint sysid, byte compid, mp_message_fn send,
+            mp_param_fn on_param, IntPtr user);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mp_param_download_destroy(IntPtr download);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_param_download_start(IntPtr download, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_param_download_frame(IntPtr download, byte[] frame, UIntPtr len, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_param_download_tick(IntPtr download, long now_us);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int mp_param_download_status_get(IntPtr download, ref mp_param_download_status status);
+
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         public static extern uint mp_abi_version();
 
@@ -260,6 +312,122 @@ namespace MissionPlanner.Mavlink.Native
             error = 0;
             Array.Resize(ref output, n);
             return output;
+        }
+    }
+
+    /// <summary>A PARAM_VALUE as the parameter download saw it.</summary>
+    public sealed class MpParam
+    {
+        public string Name;
+        public float Value;
+        public byte Type;
+        public bool Duplicate;
+        public ushort Index;
+        public ushort Count;
+    }
+
+    /// <summary>
+    /// A vehicle's parameter list download (see mp_param_download in mpcore.h). Thread-safe: frames
+    /// may come from the reader thread while Tick runs elsewhere. Events are raised inside the calls,
+    /// under the download's lock.
+    /// </summary>
+    public sealed class MpParamDownload : IDisposable
+    {
+        readonly object _sync = new object();
+        readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        readonly MpCoreNative.mp_message_fn _onSend;
+        readonly MpCoreNative.mp_param_fn _onParam;
+        IntPtr _download;
+
+        /// <summary>A message to send to the vehicle: msgid and payload in wire order.</summary>
+        public event Action<uint, byte[]> Send;
+
+        /// <summary>Every PARAM_VALUE from the vehicle, new or a duplicate.</summary>
+        public event Action<MpParam> Param;
+
+        public MpParamDownload(uint sysId, byte compId)
+        {
+            _onSend = OnSend;
+            _onParam = OnParam;
+            _download = MpCoreNative.mp_param_download_create(sysId, compId, _onSend, _onParam, IntPtr.Zero);
+            if (_download == IntPtr.Zero)
+                throw new InvalidOperationException("mp_param_download_create failed");
+        }
+
+        long NowUs => _clock.Elapsed.Ticks / (TimeSpan.TicksPerMillisecond / 1000);
+
+        public void Start()
+        {
+            lock (_sync)
+                if (_download != IntPtr.Zero)
+                    MpCoreNative.mp_param_download_start(_download, NowUs);
+        }
+
+        /// <summary>A received frame (header to signature).</summary>
+        public void Frame(byte[] frame)
+        {
+            if (frame == null || frame.Length == 0)
+                return;
+            lock (_sync)
+                if (_download != IntPtr.Zero)
+                    MpCoreNative.mp_param_download_frame(_download, frame, (UIntPtr)frame.Length, NowUs);
+        }
+
+        /// <summary>Sends retries when due; true once every parameter has arrived.</summary>
+        public bool Tick()
+        {
+            lock (_sync)
+                return _download != IntPtr.Zero && MpCoreNative.mp_param_download_tick(_download, NowUs) == 1;
+        }
+
+        public MpCoreNative.mp_param_download_status Status
+        {
+            get
+            {
+                var status = new MpCoreNative.mp_param_download_status
+                    { struct_size = (uint)Marshal.SizeOf(typeof(MpCoreNative.mp_param_download_status)) };
+                lock (_sync)
+                    if (_download != IntPtr.Zero)
+                        MpCoreNative.mp_param_download_status_get(_download, ref status);
+                return status;
+            }
+        }
+
+        public bool Done => Status.done != 0;
+
+        void OnSend(IntPtr user, uint msgid, IntPtr payload, UIntPtr len)
+        {
+            var bytes = new byte[(int)len];
+            Marshal.Copy(payload, bytes, 0, bytes.Length);
+            // an exception must not unwind through native frames
+            try { Send?.Invoke(msgid, bytes); } catch (Exception ex) { Console.Error.WriteLine("mpcore params Send: " + ex); }
+        }
+
+        void OnParam(IntPtr user, ref MpCoreNative.mp_param p)
+        {
+            var param = new MpParam
+            {
+                Name = Marshal.PtrToStringAnsi(p.name),
+                Value = p.value,
+                Type = p.type,
+                Duplicate = p.duplicate != 0,
+                Index = p.index,
+                Count = p.count,
+            };
+            try { Param?.Invoke(param); } catch (Exception ex) { Console.Error.WriteLine("mpcore params Param: " + ex); }
+        }
+
+        public void Dispose()
+        {
+            lock (_sync)
+            {
+                if (_download != IntPtr.Zero)
+                    MpCoreNative.mp_param_download_destroy(_download);
+                _download = IntPtr.Zero;
+            }
+
+            GC.KeepAlive(_onSend);
+            GC.KeepAlive(_onParam);
         }
     }
 

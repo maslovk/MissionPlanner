@@ -222,11 +222,95 @@ static void test_frame_encode(void) {
     CHECK(mp_frame_encode(NULL, command, sizeof(command), frame, sizeof(frame)) == MP_ERR_ARGUMENT);
 }
 
+typedef struct param_capture {
+    uint32_t sent[8];
+    int sent_count;
+    int params;
+    int duplicates;
+    char last_name[17];
+    float last_value;
+} param_capture;
+
+static void MPCORE_CALL param_send(void *user, uint32_t msgid, const uint8_t *payload, size_t len) {
+    param_capture *c = (param_capture *)user;
+    (void)payload;
+    (void)len;
+    if (c->sent_count < 8)
+        c->sent[c->sent_count] = msgid;
+    c->sent_count++;
+}
+
+static void MPCORE_CALL param_got(void *user, const mp_param *p) {
+    param_capture *c = (param_capture *)user;
+    if (p->duplicate) {
+        c->duplicates++;
+        return;
+    }
+    c->params++;
+    strncpy(c->last_name, p->name, 16);
+    c->last_name[16] = 0;
+    c->last_value = p->value;
+}
+
+/* a PARAM_VALUE frame from sysid 1 compid 1 */
+static int param_frame(uint8_t *frame, uint16_t index, uint16_t count, const char *name, float value) {
+    uint8_t payload[25];
+    mp_encode_args args;
+    memset(payload, 0, sizeof(payload));
+    memcpy(payload, &value, 4);
+    memcpy(payload + 4, &count, 2);
+    memcpy(payload + 6, &index, 2);
+    memcpy(payload + 8, name, strlen(name));
+    payload[24] = 9;
+    memset(&args, 0, sizeof(args));
+    args.struct_size = sizeof(args);
+    args.msgid = 22;
+    args.src_sysid = 1;
+    args.src_compid = 1;
+    return mp_frame_encode(&args, payload, sizeof(payload), frame, MPCORE_MAX_FRAME_LEN);
+}
+
+static void test_param_download(void) {
+    param_capture c;
+    mp_param_download_status st;
+    uint8_t frame[MPCORE_MAX_FRAME_LEN];
+    mp_param_download *d;
+    int n;
+
+    memset(&c, 0, sizeof(c));
+    d = mp_param_download_create(1, 1, param_send, param_got, &c);
+    CHECK(d != NULL);
+    CHECK(mp_param_download_start(d, 0) == MP_OK);
+    CHECK(c.sent_count == 1 && c.sent[0] == 21); /* PARAM_REQUEST_LIST */
+
+    n = param_frame(frame, 0, 2, "FRAME_CLASS", 1.0f);
+    CHECK(mp_param_download_frame(d, frame, (size_t)n, 1000) == MP_OK);
+    CHECK(mp_param_download_frame(d, frame, (size_t)n, 2000) == MP_OK);
+    CHECK(c.params == 1 && c.duplicates == 1 && strcmp(c.last_name, "FRAME_CLASS") == 0);
+    CHECK(mp_param_download_tick(d, 3000) == 0);
+
+    /* a full 16-character name has no NUL on the wire */
+    n = param_frame(frame, 1, 2, "ABCDEFGHIJKLMNOP", 2.5f);
+    mp_param_download_frame(d, frame, (size_t)n, 4000);
+    CHECK(strcmp(c.last_name, "ABCDEFGHIJKLMNOP") == 0 && c.last_value == 2.5f);
+    CHECK(mp_param_download_tick(d, 5000) == 1);
+
+    memset(&st, 0, sizeof(st));
+    st.struct_size = sizeof(st);
+    CHECK(mp_param_download_status_get(d, &st) == MP_OK);
+    CHECK(st.done == 1 && st.received == 2 && st.total == 2 && st.full_list_requests == 1 && st.single_requests == 0);
+    mp_param_download_destroy(d);
+    mp_param_download_destroy(NULL);
+    CHECK(mp_param_download_start(NULL, 0) == MP_ERR_ARGUMENT);
+    CHECK(mp_param_download_tick(NULL, 0) == MP_ERR_ARGUMENT);
+}
+
 int main(void) {
     test_version_and_messages();
     test_round_trip();
     test_errors();
     test_frame_encode();
+    test_param_download();
     printf("%s (%d failed checks)\n", failures == 0 ? "ok" : "FAIL", failures);
     return failures == 0 ? 0 : 1;
 }
