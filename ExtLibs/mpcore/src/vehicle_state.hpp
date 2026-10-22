@@ -2,21 +2,24 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <climits>
 
 #include "mpcore/mpcore.h"
 
 namespace mpcore {
 
 // One vehicle's telemetry, decoded from its messages the way Mission Planner's CurrentState does
-// (Parent_OnPacketReceived and the property setters), without I/O. Covers the messages the HUD,
-// map and status screens are built from; values are CurrentState's stored values, before its
-// display-unit multipliers and altitude offsets. Frames from other vehicles are ignored, except
-// RADIO/RADIO_STATUS (from the radio, for everyone on the link) and NAMED_VALUE_FLOAT from another
-// component of the same vehicle, as CurrentState takes them.
+// (Parent_OnPacketReceived and the property setters), without I/O: its numeric telemetry, as
+// CurrentState's stored values, before its display-unit multipliers and altitude offsets. Frames
+// from other vehicles are ignored, except RADIO/RADIO_STATUS (from the radio, for everyone on the
+// link), as CurrentState takes them.
 // Left in C# for now: everything that reads settings, parameters or the firmware's mode names
-// (the mode string, messageHigh, speech, low-airspeed warnings), and the values CurrentState derives
-// from the wall clock (climb rate without VFR_HUD, mAh integrated from SYS_STATUS current, time in
-// the air), though battery mAh integration is done with the caller's clock.
+// (the mode string, messageHigh, speech, low-airspeed warnings), what needs the home altitude
+// (HIGH_LATENCY, HIGH_LATENCY2, POSITION_TARGET_GLOBAL_INT), NAMED_VALUE_FLOAT's named custom
+// fields, GIMBAL_DEVICE_ATTITUDE_STATUS (C#'s quaternion), the transponder status, the HIL
+// channels, and what CurrentState derives from the wall clock (climb rate without VFR_HUD, mAh from
+// SYS_STATUS current, time in the air, log playback speed-up), though the mAh integration is done
+// with the caller's clock.
 class VehicleState {
 public:
     VehicleState(uint32_t sysid, uint8_t compid);
@@ -34,6 +37,8 @@ private:
     uint8_t compid_;
     mp_vehicle_state s_{};
     int64_t last_current_us_[2] = {-1, -1};
+    // the downward DISTANCE_SENSOR that gives sonarrange (CurrentState._rangefinderalt_index)
+    int rangefinder_index_ = INT32_MAX;
 };
 
 }  // namespace mpcore

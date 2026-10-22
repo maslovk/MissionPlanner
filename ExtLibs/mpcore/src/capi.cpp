@@ -96,10 +96,10 @@ static_assert(sizeof(mp_ftp_entry) == 24 && offsetof(mp_ftp_entry, size) == 16, 
 static_assert(MP_FTP_MAX_DATA == mpcore::Ftp::kMaxData, "MP_FTP_MAX_DATA is wrong");
 // the C# binding mirrors mp_vehicle_state field for field; MpCoreSmoke checks these
 static_assert(offsetof(mp_vehicle_state, lat) == 8, "mp_vehicle_state.lat moved");
-static_assert(offsetof(mp_vehicle_state, battery_remain_min) == 8 + 5 * 8 + 4 * 9 * 8 + 14 * 8,
+static_assert(offsetof(mp_vehicle_state, battery_remain_min) == 8 + 5 * 8 + 4 * 9 * 8 + 14 * 8 + 6 * 8,
               "mp_vehicle_state.battery_remain_min moved");
 static_assert(offsetof(mp_vehicle_state, reserved) + sizeof(((mp_vehicle_state *)nullptr)->reserved) ==
-                  sizeof(mp_vehicle_state) && sizeof(mp_vehicle_state) == 872,
+                  sizeof(mp_vehicle_state) && sizeof(mp_vehicle_state) == 1656,
               "mp_vehicle_state has padding");
 static_assert(offsetof(mp_param, value) == 2 * sizeof(void *), "mp_param.value moved");
 

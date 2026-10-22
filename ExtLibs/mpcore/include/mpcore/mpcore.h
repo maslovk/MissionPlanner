@@ -488,6 +488,10 @@ typedef struct mp_vehicle_state {
     double battery_used_mah[MP_VEHICLE_BATTERIES];
     double battery_temp[MP_VEHICLE_BATTERIES];    /* degC, kept while not reported */
     double battery_cells[14];                      /* V, battery 0 */
+    double lat2, lng2;                             /* deg, GPS2_RAW */
+    double ahrs2_lat, ahrs2_lng;                   /* deg, AHRS2 */
+    uint64_t uid;                                  /* AUTOPILOT_VERSION */
+    uint64_t time_unix_usec;                       /* SYSTEM_TIME */
     float battery_remain_min[MP_VEHICLE_BATTERIES];
     float roll, pitch, yaw;                        /* deg, yaw 0..360 */
     float alt, altasl;                             /* m, relative to home and AMSL */
@@ -499,6 +503,26 @@ typedef struct mp_vehicle_state {
     float ekf_status, ekf_velv, ekf_compv, ekf_poshor, ekf_posvert, ekf_teralt;
     float press_abs, press_temp, airspeed1_temp;
     float ter_curalt, ter_alt;
+    float press_abs2, press_temp2, airspeed2_temp; /* SCALED_PRESSURE2 */
+    float altasl2, gps_hdop2, satcount2, groundspeed2, groundcourse2;  /* GPS2_RAW */
+    float gps_h_acc2, gps_v_acc2, gps_vel_acc2, gps_hdg_acc2, gps_yaw2;
+    float rpm[2];
+    float esc_voltage[16], esc_current[16], esc_rpm[16], esc_temp[16]; /* ESC_TELEMETRY_* */
+    float imu_accel[9], imu_gyro[9], imu_mag[9];   /* x, y, z of IMUs 1..3 (RAW/SCALED_IMU*, HIGHRES_IMU) */
+    float imu_temp[3];                             /* degC */
+    float pid_ff, pid_p, pid_i, pid_d, pid_desired, pid_achieved, pid_srate, pid_pdmod; /* PID_TUNING */
+    float pid_srate_axis[6];                       /* by PID_TUNING_AXIS, roll first */
+    float asratio, hwvoltage, sonarrange, sonarvoltage;
+    float efi_baro, efi_headtemp, efi_load, efi_exhausttemp, efi_intaketemp, efi_rpm; /* EFI_STATUS, ECU 0 */
+    float efi_fuelflow, efi_fuelconsumed, efi_fuelpressure;
+    float boardvoltage, servovoltage;              /* POWER_STATUS, mV */
+    float wind_dir, wind_speed;                    /* WIND: deg, m/s */
+    float freemem, brklevel, aoa, ssa;
+    float campoint[3];                             /* MOUNT_STATUS, deg */
+    float opt_m_x, opt_m_y, posn, pose, posd;
+    float gen_status, gen_speed, gen_current, gen_voltage; /* GENERATOR_STATUS */
+    float mcu_temp, mcu_voltage, mcu_voltage_min, mcu_voltage_max; /* MCU_STATUS 0 */
+    float ahrs2_roll, ahrs2_pitch, ahrs2_yaw, ahrs2_alt;
     uint32_t custom_mode;
     uint32_t sensors_present, sensors_enabled, sensors_health;
     uint32_t errors_count[4];
@@ -506,14 +530,22 @@ typedef struct mp_vehicle_state {
     int32_t battery_remaining[MP_VEHICLE_BATTERIES];
     int32_t rxrssi;
     int32_t ekf_flags;
+    uint32_t flight_sw_version, capabilities;     /* AUTOPILOT_VERSION (the low 32 capability bits) */
+    uint32_t rangefinder[10];                      /* cm, DISTANCE_SENSOR by id */
+    uint32_t voltageflag, gen_runtime;
+    int32_t gen_maint_time;
     uint16_t wpno, drop_rate_comm, rxerrors, fixed;
     uint16_t ter_load, ter_pend, ter_space;
     uint16_t rc_in[16];
     uint16_t servo_out[32];
+    uint16_t i2cerrors, fenceb_count;
+    uint16_t hygro_humi[2];
+    int16_t hygro_temp[2], opt_x, opt_y;
     uint8_t heartbeat_seen, type, autopilot, base_mode, system_status, armed, landed, failsafe;
     uint8_t custom_mode_seen, sensors_seen, vtol_state, landed_state, gps_fix_type, use_location, got_vfr;
     uint8_t rssi, remrssi, txbuf, noise, remnoise;
-    uint8_t reserved[10]; /* to a multiple of 8: no tail padding */
+    uint8_t pid_axis, gps_fix_type2, efi_health, opt_qua, fenceb_type, fenceb_status, got_wind;
+    uint8_t reserved[7]; /* to a multiple of 8: no tail padding */
 } mp_vehicle_state;
 
 MPCORE_API mp_vehicle *MPCORE_CALL mp_vehicle_create(uint32_t sysid, uint8_t compid);

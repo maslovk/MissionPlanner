@@ -374,7 +374,7 @@ static class MpCoreSmoke
     // decode
     static void Vehicle()
     {
-        Check(Marshal.SizeOf(typeof(MpCoreNative.mp_vehicle_state)) == 872, "mp_vehicle_state size " +
+        Check(Marshal.SizeOf(typeof(MpCoreNative.mp_vehicle_state)) == 1656, "mp_vehicle_state size " +
               Marshal.SizeOf(typeof(MpCoreNative.mp_vehicle_state)));
         using (var vehicle = new MpVehicle(1, 1))
         {
@@ -390,7 +390,13 @@ static class MpCoreSmoke
             var s = vehicle.State();
             Check(s.messages == 2 && Math.Abs(s.roll - 28.6479f) < 1e-3 && Math.Abs(s.yaw - 331.3521f) < 1e-3, "attitude");
             Check(s.rc_in[0] == 1234 && s.rc_in[15] == 1999 && s.rxrssi == 50, "rc in, the last of the 2-byte fields");
-            Check(s.reserved.Length == 10, "the 1-byte fields");
+            Check(s.reserved.Length == 7, "the 1-byte fields");
+            var hw = new byte[3];
+            BitConverter.GetBytes((ushort)5012).CopyTo(hw, 0);  // Vcc
+            hw[2] = 3;                                         // I2Cerr
+            Check(vehicle.Frame(Encode(165, hw)), "HWSTATUS taken");
+            s = vehicle.State();
+            Check(Math.Abs(s.hwvoltage - 5.012f) < 1e-6 && s.i2cerrors == 3, "a late float and 2-byte field");
         }
     }
 

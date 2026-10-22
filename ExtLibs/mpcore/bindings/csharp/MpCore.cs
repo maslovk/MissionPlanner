@@ -411,6 +411,10 @@ namespace MissionPlanner.Mavlink.Native
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = MP_VEHICLE_BATTERIES)] public double[] battery_used_mah;
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = MP_VEHICLE_BATTERIES)] public double[] battery_temp;
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 14)] public double[] battery_cells;
+            public double lat2, lng2;
+            public double ahrs2_lat, ahrs2_lng;
+            public ulong uid;
+            public ulong time_unix_usec;
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = MP_VEHICLE_BATTERIES)] public float[] battery_remain_min;
             public float roll, pitch, yaw;
             public float alt, altasl;
@@ -422,6 +426,31 @@ namespace MissionPlanner.Mavlink.Native
             public float ekf_status, ekf_velv, ekf_compv, ekf_poshor, ekf_posvert, ekf_teralt;
             public float press_abs, press_temp, airspeed1_temp;
             public float ter_curalt, ter_alt;
+            public float press_abs2, press_temp2, airspeed2_temp;
+            public float altasl2, gps_hdop2, satcount2, groundspeed2, groundcourse2;
+            public float gps_h_acc2, gps_v_acc2, gps_vel_acc2, gps_hdg_acc2, gps_yaw2;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)] public float[] rpm;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public float[] esc_voltage;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public float[] esc_current;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public float[] esc_rpm;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public float[] esc_temp;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 9)] public float[] imu_accel;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 9)] public float[] imu_gyro;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 9)] public float[] imu_mag;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)] public float[] imu_temp;
+            public float pid_ff, pid_p, pid_i, pid_d, pid_desired, pid_achieved, pid_srate, pid_pdmod;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)] public float[] pid_srate_axis;
+            public float asratio, hwvoltage, sonarrange, sonarvoltage;
+            public float efi_baro, efi_headtemp, efi_load, efi_exhausttemp, efi_intaketemp, efi_rpm;
+            public float efi_fuelflow, efi_fuelconsumed, efi_fuelpressure;
+            public float boardvoltage, servovoltage;
+            public float wind_dir, wind_speed;
+            public float freemem, brklevel, aoa, ssa;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)] public float[] campoint;
+            public float opt_m_x, opt_m_y, posn, pose, posd;
+            public float gen_status, gen_speed, gen_current, gen_voltage;
+            public float mcu_temp, mcu_voltage, mcu_voltage_min, mcu_voltage_max;
+            public float ahrs2_roll, ahrs2_pitch, ahrs2_yaw, ahrs2_alt;
             public uint custom_mode;
             public uint sensors_present, sensors_enabled, sensors_health;
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)] public uint[] errors_count;
@@ -429,14 +458,23 @@ namespace MissionPlanner.Mavlink.Native
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = MP_VEHICLE_BATTERIES)] public int[] battery_remaining;
             public int rxrssi;
             public int ekf_flags;
+            public uint flight_sw_version, capabilities;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 10)] public uint[] rangefinder;
+            public uint voltageflag, gen_runtime;
+            public int gen_maint_time;
             public ushort wpno, drop_rate_comm, rxerrors, @fixed;
             public ushort ter_load, ter_pend, ter_space;
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public ushort[] rc_in;
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)] public ushort[] servo_out;
+            public ushort i2cerrors, fenceb_count;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)] public ushort[] hygro_humi;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)] public short[] hygro_temp;
+            public short opt_x, opt_y;
             public byte heartbeat_seen, type, autopilot, base_mode, system_status, armed, landed, failsafe;
             public byte custom_mode_seen, sensors_seen, vtol_state, landed_state, gps_fix_type, use_location, got_vfr;
             public byte rssi, remrssi, txbuf, noise, remnoise;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 10)] public byte[] reserved;
+            public byte pid_axis, gps_fix_type2, efi_health, opt_qua, fenceb_type, fenceb_status, got_wind;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 7)] public byte[] reserved;
         }
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]

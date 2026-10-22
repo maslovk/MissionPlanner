@@ -243,3 +243,91 @@ TEST(vehicle_rc_servo_nav_ekf) {
     CHECK(feed(v, FRAME(EKF_STATUS_REPORT, ekf)));
     CHECK_EQ(v.state().ekf_status, 1.0f);
 }
+
+TEST(vehicle_sensors_and_rangefinders) {
+    VehicleState v(1, 1);
+    const auto &s = v.state();
+
+    // the lowest downward sensor gives the rangefinder altitude, in whole metres
+    mavlink_distance_sensor_t d{};
+    d.id = 2;
+    d.orientation = 25;
+    d.current_distance = 1234;
+    CHECK(feed(v, FRAME(DISTANCE_SENSOR, d)));
+    CHECK(s.rangefinder[2] == 1234 && s.sonarrange == 12.0f);
+    d.id = 1;
+    d.orientation = 0;  // forward: not the altitude
+    d.current_distance = 500;
+    CHECK(feed(v, FRAME(DISTANCE_SENSOR, d)));
+    CHECK(s.rangefinder[1] == 500 && s.sonarrange == 12.0f);
+    d.id = 12;  // past the ten kept, still a frame for this vehicle
+    CHECK(feed(v, FRAME(DISTANCE_SENSOR, d)));
+
+    mavlink_wind_t w{};
+    w.direction = -90;
+    w.speed = 4.5f;
+    CHECK(feed(v, FRAME(WIND, w)));
+    CHECK(s.wind_dir == 270.0f && s.wind_speed == 4.5f && s.got_wind == 1);
+
+    // HIGHRES_IMU: only the groups flagged as updated
+    mavlink_highres_imu_t hi{};
+    hi.id = 1;
+    hi.xacc = 1;
+    hi.xgyro = 2;
+    hi.abs_pressure = 1001.5f;
+    hi.pressure_alt = 55.5f;
+    hi.temperature = 31.9f;
+    hi.fields_updated = 0x01 | 0x200 | 0x1000;
+    CHECK(feed(v, FRAME(HIGHRES_IMU, hi)));
+    CHECK(s.imu_accel[3] == 1 && s.imu_gyro[3] == 0 && s.press_abs == 1001.5f && s.press_temp == 31.0f);
+    CHECK_EQ(s.altasl, 0.0f);
+
+    mavlink_esc_telemetry_5_to_8_t esc{};
+    esc.voltage[1] = 1680;
+    esc.rpm[1] = 9000;
+    esc.temperature[1] = 45;
+    CHECK(feed(v, FRAME(ESC_TELEMETRY_5_TO_8, esc)));
+    CHECK(s.esc_voltage[5] == 16.8f && s.esc_rpm[5] == 9000 && s.esc_temp[5] == 45);
+
+    mavlink_ahrs2_t a{};
+    a.roll = 0.3f;
+    a.lat = -353632610;
+    CHECK(feed(v, FRAME(AHRS2, a)));
+    CHECK_EQ(s.ahrs2_roll, 0.3f * static_cast<float>(180 / 3.14159265358979323846));
+    CHECK_EQ(s.ahrs2_lat, -35.363261);
+
+    mavlink_meminfo_t m{};
+    m.freemem = 1000;
+    CHECK(feed(v, FRAME(MEMINFO, m)));
+    CHECK_EQ(s.freemem, 1000.0f);
+    m.freemem32 = 200000;
+    CHECK(feed(v, FRAME(MEMINFO, m)));
+    CHECK_EQ(s.freemem, 200000.0f);
+
+    mavlink_efi_status_t e{};
+    e.rpm = 4000;
+    CHECK(feed(v, FRAME(EFI_STATUS, e)));
+    CHECK(s.efi_rpm == 4000 && s.efi_fuelpressure == -1);
+    e.ecu_index = 1;
+    CHECK(!feed(v, FRAME(EFI_STATUS, e)));
+
+    mavlink_gps2_raw_t g{};
+    g.lat = 10;
+    g.eph = 99;
+    g.cog = 36000;
+    CHECK(feed(v, FRAME(GPS2_RAW, g)));
+    CHECK(s.lat2 == 10 * 1.0e-7 && s.gps_hdop2 == 0.99f && s.groundcourse2 == 360.0f);
+
+    mavlink_pid_tuning_t p{};
+    p.axis = 3;
+    p.SRate = 0.25f;
+    CHECK(feed(v, FRAME(PID_TUNING, p)));
+    CHECK(s.pid_axis == 3 && s.pid_srate_axis[2] == 0.25f && s.pid_srate_axis[0] == 0);
+
+    mavlink_autopilot_version_t av{};
+    av.flight_sw_version = 0x04050600;
+    av.capabilities = 0x1'0000'ffefull;
+    av.uid = 42;
+    CHECK(feed(v, FRAME(AUTOPILOT_VERSION, av)));
+    CHECK(s.flight_sw_version == 0x04050600 && s.capabilities == 0xffef && s.uid == 42);
+}
