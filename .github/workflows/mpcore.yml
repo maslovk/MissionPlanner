@@ -62,13 +62,18 @@ jobs:
         run: |
           cmake --version
           $csc = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "MSBuild\Current\Bin\Roslyn\csc.exe" | Select-Object -First 1
-          pwsh .github/scripts/run-annotated.ps1 cmake --preset ${{ matrix.preset }} -S ExtLibs/mpcore "-DMPCORE_CSHARP_COMPILER=$csc"
+          . .github/scripts/run-annotated.ps1
+          Invoke-Annotated { cmake --preset ${{ matrix.preset }} -S ExtLibs/mpcore "-DMPCORE_CSHARP_COMPILER=$csc" }
       - name: Build
         shell: pwsh
-        run: pwsh .github/scripts/run-annotated.ps1 cmake --build ExtLibs/mpcore/build/${{ matrix.preset }} --config Release
+        run: |
+          . .github/scripts/run-annotated.ps1
+          Invoke-Annotated { cmake --build ExtLibs/mpcore/build/${{ matrix.preset }} --config Release }
       - name: Test
         shell: pwsh
-        run: pwsh .github/scripts/run-annotated.ps1 ctest --test-dir ExtLibs/mpcore/build/${{ matrix.preset }} -C Release --output-on-failure
+        run: |
+          . .github/scripts/run-annotated.ps1
+          Invoke-Annotated { ctest --test-dir ExtLibs/mpcore/build/${{ matrix.preset }} -C Release --output-on-failure }
       - uses: actions/upload-artifact@v4
         with:
           name: mpcore-${{ matrix.preset }}

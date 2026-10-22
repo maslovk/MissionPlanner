@@ -25,11 +25,10 @@ jobs:
       - name: Build mpcore
         shell: pwsh
         run: |
+          . .github/scripts/run-annotated.ps1
           foreach ($arch in @('x64', 'x86')) {
-            pwsh .github/scripts/run-annotated.ps1 cmake --preset windows-$arch -S ExtLibs/mpcore -DMPCORE_BUILD_TESTS=OFF
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            pwsh .github/scripts/run-annotated.ps1 cmake --build ExtLibs/mpcore/build/windows-$arch --config Release --target mpcore
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Invoke-Annotated { cmake --preset windows-$arch -S ExtLibs/mpcore -DMPCORE_BUILD_TESTS=OFF }
+            Invoke-Annotated { cmake --build ExtLibs/mpcore/build/windows-$arch --config Release --target mpcore }
             New-Item -ItemType Directory -Force bin/Release/net461/$arch | Out-Null
             Copy-Item ExtLibs/mpcore/build/windows-$arch/bin/Release/mpcore.dll bin/Release/net461/$arch/
           }
