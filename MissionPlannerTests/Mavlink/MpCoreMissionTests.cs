@@ -159,21 +159,20 @@ namespace MissionPlannerTests.Mavlink
         }
 
         // A vehicle taking an upload: it loses the first count and its request for item 5 once (so
-        // item 4 is sent again), and acknowledges the last item.
+        // item 4 is sent again), and acknowledges the last item. It asks with MISSION_REQUEST, as
+        // ArduPilot does: setWPAsync's MISSION_ITEM_INT overload does not take MISSION_REQUEST_INT.
         sealed class Receiver
         {
             readonly MpCoreTestSerial _serial;
             readonly MAVLink.MavlinkParse _encoder = new MAVLink.MavlinkParse();
-            readonly bool _asInt;
             int _total = -1;
             bool _lostCount, _lostRequest;
             public readonly Dictionary<int, Locationwp> Items = new Dictionary<int, Locationwp>();
             public int Counts, ItemsReceived, Acks;
 
-            public Receiver(MpCoreTestSerial serial, bool asInt)
+            public Receiver(MpCoreTestSerial serial)
             {
                 _serial = serial;
-                _asInt = asInt;
                 serial.OnWrite = Receive;
             }
 
@@ -184,16 +183,8 @@ namespace MissionPlannerTests.Mavlink
                     _lostRequest = true;
                     return;
                 }
-                if (_asInt)
-                {
-                    var req = new MAVLink.mavlink_mission_request_int_t { seq = (ushort)seq, target_system = 255, target_component = 190 };
-                    _serial.Feed(_encoder.GenerateMAVLinkPacket20(MAVLink.MAVLINK_MSG_ID.MISSION_REQUEST_INT, req, false, 1, 1));
-                }
-                else
-                {
-                    var req = new MAVLink.mavlink_mission_request_t { seq = (ushort)seq, target_system = 255, target_component = 190 };
-                    _serial.Feed(_encoder.GenerateMAVLinkPacket20(MAVLink.MAVLINK_MSG_ID.MISSION_REQUEST, req, false, 1, 1));
-                }
+                var req = new MAVLink.mavlink_mission_request_t { seq = (ushort)seq, target_system = 255, target_component = 190 };
+                _serial.Feed(_encoder.GenerateMAVLinkPacket20(MAVLink.MAVLINK_MSG_ID.MISSION_REQUEST, req, false, 1, 1));
             }
 
             void Receive(byte[] frame)
@@ -270,7 +261,7 @@ namespace MissionPlannerTests.Mavlink
             {
                 var serial = new MpCoreTestSerial();
                 port.BaseStream = serial;
-                var vehicle = new Receiver(serial, missionInt);
+                var vehicle = new Receiver(serial);
                 if (missionInt)
                     port.MAVlist[1, 1].cs.capabilities |= (uint)MAVLink.MAV_PROTOCOL_CAPABILITY.MISSION_INT;
                 mav_mission.upload(port, 1, 1, MAVLink.MAV_MISSION_TYPE.MISSION, Mission()).GetAwaiter().GetResult();

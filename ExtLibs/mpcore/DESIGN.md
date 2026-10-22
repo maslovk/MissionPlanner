@@ -87,6 +87,9 @@ running meanwhile.
 * `uploadPartial` resumes INVALID_SEQUENCE at an absolute seq in a relative index (`mav_mission.cs` ~228).
 * `setWPTotalAsync` writes WP_TOTAL/CMD_TOTAL/MIS_TOTAL on the current MAV, not the target.
 * The `setWPAsync` MISSION_ITEM overload stores the MISSION_REQUEST_INT reply only into `wps`, whatever the mission type.
+* The `setWPAsync` MISSION_ITEM_INT overload takes MISSION_REQUEST but not MISSION_REQUEST_INT as the next
+  request, so a vehicle asking with MISSION_REQUEST_INT (PX4) times out after the first item; ArduPilot asks
+  with MISSION_REQUEST.
 * `getParamListAsync` reads packets without `giveComport`, competing with the main reader.
 * `giveComport`'s "wait for the current read" locks the `SemaphoreSlim` object as a monitor, which never waits for a read.
 * Signed frames are not checked for replay (the timestamp is computed and ignored). mpcore keeps
