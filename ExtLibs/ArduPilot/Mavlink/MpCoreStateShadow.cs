@@ -119,9 +119,10 @@ namespace MissionPlanner.ArduPilot.Mavlink
                     _report.ByField[field.Name] = n + 1;
                     if (_detailLogs++ < DetailLogsMax)
                     {
-                        var detail = string.Format("{0} after {1} #{2} (seq {3}, len {4}, thread {7}): C# {5:R}, core {6:R}",
+                        var detail = string.Format("{0} after {1} #{2} (seq {3}, len {4}, thread {7}): C# {5:R}, core {6:R}, payload {8}",
                             field.Name, (MAVLink.MAVLINK_MSG_ID) message.msgid, _report.Messages, message.seq,
-                            message.payloadlength, csharp, core, System.Threading.Thread.CurrentThread.ManagedThreadId);
+                            message.payloadlength, csharp, core, System.Threading.Thread.CurrentThread.ManagedThreadId,
+                            Payload(message));
                         _report.Details.Add(detail);
                         _log("mpcore state shadow: " + detail);
                     }
@@ -130,6 +131,14 @@ namespace MissionPlanner.ArduPilot.Mavlink
                 if (_report.Messages % SummaryEvery == 0)
                     _log("mpcore state shadow: " + _report);
             }
+        }
+
+        // the payload bytes in hex, to tell a decode that went wrong from a different reading
+        static string Payload(MAVLink.MAVLinkMessage message)
+        {
+            int start = message.ismavlink2 ? MAVLink.MAVLINK_NUM_HEADER_BYTES : 6;
+            int len = Math.Min((int)message.payloadlength, message.buffer.Length - start);
+            return len > 0 ? BitConverter.ToString(message.buffer, start, len).Replace("-", "") : "";
         }
 
         public void Dispose()
