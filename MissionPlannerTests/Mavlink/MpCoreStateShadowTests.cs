@@ -111,7 +111,7 @@ namespace MissionPlannerTests.Mavlink
                         var totals = shadow.Totals;
                         Console.WriteLine(vehicle.Key + ": " + totals);
                         Assert.AreEqual(0, totals.Differences,
-                            vehicle.Key + ": " + totals + "\n" + string.Join("\n", totals.Details));
+                            vehicle.Key + ": " + totals + " | " + string.Join(" | ", totals.Details.Take(20)));
                         compared += totals.Compared;
                         shadow.Dispose();
                     }

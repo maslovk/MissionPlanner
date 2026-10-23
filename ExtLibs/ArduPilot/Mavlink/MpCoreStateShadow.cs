@@ -37,15 +37,17 @@ namespace MissionPlanner.ArduPilot.Mavlink
             public readonly Dictionary<string, long> ByField = new Dictionary<string, long>();
             /// <summary>The first differences in detail, as logged.</summary>
             public readonly List<string> Details = new List<string>();
+            /// <summary>The threads CurrentState took messages on.</summary>
+            public readonly HashSet<int> Threads = new HashSet<int>();
 
             public override string ToString()
             {
-                return string.Format("messages {0}, values compared {1}, differences {2}{3}", Messages, Compared,
-                    Differences,
+                return string.Format("messages {0} on {4} thread(s), values compared {1}, differences {2}{3}", Messages,
+                    Compared, Differences,
                     ByField.Count == 0
                         ? ""
                         : " (" + string.Join(", ", ByField.OrderByDescending(a => a.Value).Take(10)
-                            .Select(a => a.Key + " " + a.Value)) + ")");
+                            .Select(a => a.Key + " " + a.Value)) + ")", Threads.Count);
             }
         }
 
@@ -100,6 +102,7 @@ namespace MissionPlanner.ArduPilot.Mavlink
                 if (_vehicle == null || !_vehicle.Frame(message.buffer))
                     return;
                 _report.Messages++;
+                _report.Threads.Add(System.Threading.Thread.CurrentThread.ManagedThreadId);
                 if (!Fields.TryGetValue(message.msgid, out var fields))
                     return;
                 var state = _vehicle.State();
@@ -116,9 +119,9 @@ namespace MissionPlanner.ArduPilot.Mavlink
                     _report.ByField[field.Name] = n + 1;
                     if (_detailLogs++ < DetailLogsMax)
                     {
-                        var detail = string.Format("{0} after {1} #{2} (seq {3}, len {4}): C# {5:R}, core {6:R}",
+                        var detail = string.Format("{0} after {1} #{2} (seq {3}, len {4}, thread {7}): C# {5:R}, core {6:R}",
                             field.Name, (MAVLink.MAVLINK_MSG_ID) message.msgid, _report.Messages, message.seq,
-                            message.payloadlength, csharp, core);
+                            message.payloadlength, csharp, core, System.Threading.Thread.CurrentThread.ManagedThreadId);
                         _report.Details.Add(detail);
                         _log("mpcore state shadow: " + detail);
                     }
